@@ -499,10 +499,20 @@ namespace ClarionDctAddin
         static bool TrySetBoolField(object target, string name, bool value)
         {
             if (target == null) return false;
-            var f = target.GetType().GetField(name,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (f == null || f.FieldType != typeof(bool)) return false;
-            try { f.SetValue(target, value); return true; } catch { return false; }
+            // GetField with NonPublic does not return inherited private fields — walk
+            // the base-type chain with DeclaredOnly so fields on any ancestor are found.
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                var f = t.GetField(name,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (f != null && f.FieldType == typeof(bool))
+                {
+                    try { f.SetValue(target, value); return true; } catch { return false; }
+                }
+                t = t.BaseType;
+            }
+            return false;
         }
 
         static object GetNonPublicMember(object target, string name)
