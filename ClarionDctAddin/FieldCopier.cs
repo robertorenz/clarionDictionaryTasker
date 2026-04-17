@@ -305,17 +305,28 @@ namespace ClarionDctAddin
             var parentItemAfter = GetNonPublicMember(newField, "parentItem");
             steps.Add("parentItem=" + (parentItemAfter == null ? "null" : "set"));
 
-            // 7b. Match Location from an existing target field. A manually-added field is
-            //     Location=Application; copies inherit Location=Dictionary from source.
-            object referenceField = null;
-            if (fieldsAfter != null)
-                foreach (var f in fieldsAfter) { if (!ReferenceEquals(f, newField)) { referenceField = f; break; } }
-            if (referenceField != null)
+            // 7b. Force Location=Application — this is what a manually-added field has.
+            //     The source field's Location is irrelevant; this flag gates whether the
+            //     field is written to the physical file layout.
+            var locationProp = newField.GetType().GetProperty("Location");
+            if (locationProp != null && locationProp.PropertyType.IsEnum)
             {
-                var refLocation = DictModel.GetProp(referenceField, "Location");
-                if (refLocation != null && TrySetProp(newField, "Location", refLocation))
-                    steps.Add("Location<-" + refLocation);
+                try
+                {
+                    var appValue = Enum.Parse(locationProp.PropertyType, "Application");
+                    if (TrySetProp(newField, "Location", appValue)) steps.Add("Loc<-Application(prop)");
+                    else if (TrySetObjectField(newField, "storageLocation", appValue)) steps.Add("Loc<-Application(field)");
+                }
+                catch { steps.Add("Loc<-Application:enumErr"); }
             }
+
+            // 7c. Flip persistence flags that genuinely-new fields ship without.
+            if (TrySetBoolField(newField, "stored", true)) steps.Add("stored<-true");
+            if (TrySetBoolField(newField, "itemHasChanged", true)) steps.Add("itemHasChanged<-true");
+
+            // 7d. Assign a non-colliding recordOrder at the end of the target list.
+            int targetOrderCount = countAfter;
+            if (TrySetIntField(newField, "recordOrder", targetOrderCount)) steps.Add("recordOrder<-" + targetOrderCount);
 
             // 8. Flip Touched. Try an explicit set_Touched method too — property setter
             //    may be hidden from GetProperty() even with NonPublic because the class
@@ -410,6 +421,34 @@ namespace ClarionDctAddin
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (p == null || !p.CanWrite) return false;
             try { p.SetValue(target, value, null); return true; } catch { return false; }
+        }
+
+        static bool TrySetIntField(object target, string name, int value)
+        {
+            if (target == null) return false;
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                var f = t.GetField(name,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (f != null)
+                {
+                    try
+                    {
+                        if      (f.FieldType == typeof(int))    f.SetValue(target, value);
+                        else if (f.FieldType == typeof(short))  f.SetValue(target, (short)value);
+                        else if (f.FieldType == typeof(long))   f.SetValue(target, (long)value);
+                        else if (f.FieldType == typeof(uint))   f.SetValue(target, (uint)value);
+                        else if (f.FieldType == typeof(ushort)) f.SetValue(target, (ushort)value);
+                        else if (f.FieldType == typeof(ulong))  f.SetValue(target, (ulong)value);
+                        else f.SetValue(target, Convert.ChangeType(value, f.FieldType));
+                        return true;
+                    }
+                    catch { return false; }
+                }
+                t = t.BaseType;
+            }
+            return false;
         }
 
         static bool TrySetObjectField(object target, string fieldName, object value)
