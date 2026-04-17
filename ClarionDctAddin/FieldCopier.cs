@@ -245,33 +245,28 @@ namespace ClarionDctAddin
             }
             else
             {
-                // 3. Primary: internal DDFile.InsertField(DDField) — the path Clarion's
-                //    editor uses for new fields. Registers the field in the collection's
-                //    "added items" tracker which the save path iterates.
-                //    Falls back to public AddField if InsertField is absent.
-                var insertField = targetTable.GetType().GetMethod(
-                    "InsertField",
-                    BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { newField.GetType() }, null);
-                if (insertField != null)
-                {
-                    try { insertField.Invoke(targetTable, new object[] { newField }); steps.Add("InsertField"); }
-                    catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
-                }
-                else
-                {
-                    var addField = targetTable.GetType().GetMethod(
-                        "AddField",
-                        BindingFlags.Public | BindingFlags.Instance,
-                        null, new[] { newField.GetType() }, null);
-                    if (addField == null)
-                        throw new InvalidOperationException("Neither InsertField nor AddField on " + targetTable.GetType().FullName);
-                    try { addField.Invoke(targetTable, new object[] { newField }); steps.Add("AddField"); }
-                    catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
-                }
+                // 3. Call fieldsCollection.Add(newField) directly. This is the method
+                //    Clarion's editor invokes internally — it updates both the items
+                //    GuidKeyedCollection and the addedItems Dictionary<Guid,DDField>
+                //    (the persistence tracker) in one shot. DDFile.InsertField and
+                //    DDFile.AddField turned out to be silent no-ops in this build.
+                var fieldsCollection = DictModel.GetProp(targetTable, "Fields");
+                if (fieldsCollection == null)
+                    throw new InvalidOperationException("Target table has no Fields collection.");
+
+                var collAdd = fieldsCollection.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .FirstOrDefault(m => m.Name == "Add"
+                                      && m.GetParameters().Length == 1
+                                      && m.GetParameters()[0].ParameterType == newField.GetType());
+                if (collAdd == null)
+                    throw new InvalidOperationException("Fields collection has no Add(" + newField.GetType().Name + ").");
+
+                try { collAdd.Invoke(fieldsCollection, new object[] { newField }); steps.Add("coll.Add"); }
+                catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
             }
 
-            // 4. Post-add verification: count and presence check.
+            // 4. Post-add verification: count, presence, and addedItems tracker.
             var targetFieldsCollection = DictModel.GetProp(targetTable, "Fields");
             int countAfter = CountEnumerable(targetFieldsCollection);
             bool nowIn = false;
@@ -280,6 +275,17 @@ namespace ClarionDctAddin
                 foreach (var f in fieldsAfter) if (ReferenceEquals(f, newField)) { nowIn = true; break; }
             steps.Add("n1=" + countAfter);
             steps.Add("inFields=" + nowIn);
+
+            // The persistence tracker is the inherited addedItems Dictionary<Guid,DDField>.
+            // Report whether our field made it in.
+            var addedDictObj = GetNonPublicMember(targetFieldsCollection, "addedItems");
+            var addedDict = addedDictObj as IDictionary;
+            if (addedDict != null)
+            {
+                bool inTracker = false;
+                foreach (var v in addedDict.Values) if (ReferenceEquals(v, newField)) { inTracker = true; break; }
+                steps.Add("addedItems[" + addedDict.Count + "]" + (inTracker ? ":IN" : ":OUT"));
+            }
 
             // 5. SetInFile flips IsInFile=true so the save code treats it as persistent.
             if (TryInvokeNoArgs(newField, "SetInFile", true)) steps.Add("SetInFile");
