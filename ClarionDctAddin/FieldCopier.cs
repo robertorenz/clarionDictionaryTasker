@@ -295,13 +295,15 @@ namespace ClarionDctAddin
             var dict = DictModel.GetProp(targetTable, "DataDictionary");
             if (TryInvokeNoArgs(dict, "ChildListTouched", true)) steps.Add("dict.ChildListTouched");
 
-            // 7a. Wire Parent — Copy() populates File but leaves parentItem null, which
-            //     orphans the field in the hierarchy and causes save to drop it.
-            if (DictModel.GetProp(newField, "Parent") == null)
-            {
-                if (TrySetProp(newField, "Parent", targetTable)) steps.Add("Parent<-prop");
-                else if (TrySetObjectField(newField, "parentItem", targetTable)) steps.Add("Parent<-field");
-            }
+            // 7a. Wire Parent. The Parent property setter reported success last run but
+            //     the getter still returned null — strong sign the setter writes to a
+            //     different backing store than the getter reads. Go straight to the
+            //     parentItem backing field on the DataDictionaryItem base class. Also
+            //     still attempt the property setter so the event subscribers run.
+            if (TrySetObjectField(newField, "parentItem", targetTable)) steps.Add("parentItem<-field");
+            if (TrySetProp(newField, "Parent", targetTable)) steps.Add("Parent<-prop");
+            var parentItemAfter = GetNonPublicMember(newField, "parentItem");
+            steps.Add("parentItem=" + (parentItemAfter == null ? "null" : "set"));
 
             // 7b. Match Location from an existing target field. A manually-added field is
             //     Location=Application; copies inherit Location=Dictionary from source.
@@ -325,11 +327,24 @@ namespace ClarionDctAddin
             if (!CollectionInternalsDumped)
             {
                 CollectionInternalsDumped = true;
+
+                // The newly-copied field — shows what Copy() actually initialised.
+                DumpNonPublicState(newField, result.Messages, "NewField.");
+
                 if (targetFieldsCollection != null)
                     DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-coll.");
                 DumpNonPublicState(targetTable, result.Messages, "DDFile.");
+
+                // FC via public property.
                 var fc = DictModel.GetProp(targetTable, "FC");
+                result.Messages.Add("FC public: " + (fc == null ? "NULL" : fc.GetType().FullName));
                 if (fc != null) DumpNonPublicState(fc, result.Messages, "FC.");
+
+                // FieldContainer via the non-public 'fields' backing on DDBaseFile.
+                var fcField = GetNonPublicMember(targetTable, "fields");
+                result.Messages.Add("fields (nonpub): " + (fcField == null ? "NULL" : fcField.GetType().FullName));
+                if (fcField != null && !ReferenceEquals(fc, fcField))
+                    DumpNonPublicState(fcField, result.Messages, "fields-np.");
             }
 
             // 8. Per-field state — extra properties that save may consult.
