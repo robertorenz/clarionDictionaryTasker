@@ -86,8 +86,11 @@ namespace ClarionDctAddin
             return dctPath + ".tasker-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
         }
 
+        static bool CollectionInternalsDumped;
+
         public static ApplyResult Apply(List<PlanItem> plan, object dict, object viewContent, string dctPath)
         {
+            CollectionInternalsDumped = false;
             var result = new ApplyResult();
 
             if (!string.IsNullOrEmpty(dctPath) && File.Exists(dctPath))
@@ -209,6 +212,9 @@ namespace ClarionDctAddin
         {
             var steps = new List<string>();
 
+            int countBefore = CountEnumerable(DictModel.GetProp(targetTable, "Fields"));
+            steps.Add("n0=" + countBefore);
+
             // 1. Clone. quiet=false so ItemAdded events fire for subscribers like
             //    the persistence-tracker UniqueDataDictionaryItemList<T>.
             var copyMethod = sourceField.GetType()
@@ -265,44 +271,33 @@ namespace ClarionDctAddin
                 }
             }
 
-            // 4. SetInFile flips IsInFile=true so the save code treats it as persistent.
+            // 4. Post-add verification: count and presence check.
+            var targetFieldsCollection = DictModel.GetProp(targetTable, "Fields");
+            int countAfter = CountEnumerable(targetFieldsCollection);
+            bool nowIn = false;
+            var fieldsAfter = targetFieldsCollection as IEnumerable;
+            if (fieldsAfter != null)
+                foreach (var f in fieldsAfter) if (ReferenceEquals(f, newField)) { nowIn = true; break; }
+            steps.Add("n1=" + countAfter);
+            steps.Add("inFields=" + nowIn);
+
+            // 5. SetInFile flips IsInFile=true so the save code treats it as persistent.
             if (TryInvokeNoArgs(newField, "SetInFile", true)) steps.Add("SetInFile");
 
-            // 5. ChildListTouched on file + dict so both know their child list changed.
+            // 6. ChildListTouched on file + dict so both know their child list changed.
             if (TryInvokeNoArgs(targetTable, "ChildListTouched", true)) steps.Add("file.ChildListTouched");
             var dict = DictModel.GetProp(targetTable, "DataDictionary");
             if (TryInvokeNoArgs(dict, "ChildListTouched", true)) steps.Add("dict.ChildListTouched");
 
-            // 6. Flip Touched=true so Clarion's save pass treats the field as pending.
-            //    Property setter is likely non-public; fall through to backing field if so.
-            if (TrySetBoolProp(newField, "Touched", true)) steps.Add("Touched<-true(prop)");
-            else if (TrySetBoolField(newField, "touched", true)) steps.Add("Touched<-true(field)");
-            else if (TrySetBoolField(newField, "_touched", true)) steps.Add("Touched<-true(_field)");
-
-            // 7. Also ensure the field is in the Fields collection's internal "added items"
-            //    tracker. The collection exposes ClearAddedItems() but no public property;
-            //    the backing list is a non-public field. Try the common names.
-            var fieldsColl = DictModel.GetProp(targetTable, "Fields");
-            if (fieldsColl != null)
+            // 7. Diagnostic — dump UniqueDataDictionaryItemList<T> non-public state once
+            //    so we can see the real name of the persistence tracker.
+            if (!CollectionInternalsDumped && targetFieldsCollection != null)
             {
-                var added = GetNonPublicMember(fieldsColl, "addedItems")
-                         ?? GetNonPublicMember(fieldsColl, "AddedItems")
-                         ?? GetNonPublicMember(fieldsColl, "_addedItems");
-                if (added is IList)
-                {
-                    var list = (IList)added;
-                    bool inTracker = false;
-                    foreach (var x in list) if (ReferenceEquals(x, newField)) { inTracker = true; break; }
-                    if (!inTracker) { try { list.Add(newField); steps.Add("addedItems+="); } catch { steps.Add("addedItems:fail"); } }
-                    else steps.Add("addedItems:present");
-                }
-                else
-                {
-                    steps.Add("addedItems:NF");
-                }
+                CollectionInternalsDumped = true;
+                DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-collection ");
             }
 
-            // 8. Diagnostic — report the post-state of the new field.
+            // 8. Final state of the new field.
             var isInFile = DictModel.AsString(DictModel.GetProp(newField, "IsInFile")) ?? "?";
             var touched  = DictModel.AsString(DictModel.GetProp(newField, "Touched"))  ?? "?";
             steps.Add("IsInFile=" + isInFile);
@@ -311,6 +306,51 @@ namespace ClarionDctAddin
             result.Messages.Add(tag + " : " + string.Join(" > ", steps.ToArray()));
         }
 
+        static int CountEnumerable(object maybeEnum)
+        {
+            var en = maybeEnum as IEnumerable;
+            if (en == null) return -1;
+            int n = 0;
+            foreach (var _ in en) n++;
+            return n;
+        }
+
+        static void DumpNonPublicState(object o, List<string> msgs, string prefix)
+        {
+            if (o == null) return;
+            var t = o.GetType();
+            while (t != null && t != typeof(object))
+            {
+                foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+                                   .Where(x => !x.Name.EndsWith("__BackingField", StringComparison.Ordinal)))
+                {
+                    object v; string vs;
+                    try { v = f.GetValue(o); }
+                    catch (Exception ex) { vs = "<ex:" + ex.GetType().Name + ">"; msgs.Add(prefix + t.Name + "." + f.Name + " = " + vs); continue; }
+                    if (v == null) vs = "null";
+                    else if (v is string) vs = "\"" + v + "\"";
+                    else if (v is IEnumerable && !(v is string))
+                    {
+                        int c = 0; try { foreach (var _ in (IEnumerable)v) c++; } catch { }
+                        vs = "IEnumerable[" + c + "]  (" + v.GetType().Name + ")";
+                    }
+                    else vs = v.ToString();
+                    if (vs.Length > 90) vs = vs.Substring(0, 90) + "...";
+                    msgs.Add(prefix + t.Name + "." + f.Name + " : " + FormatType(f.FieldType) + " = " + vs);
+                }
+                t = t.BaseType;
+            }
+        }
+
+        static string FormatType(Type t)
+        {
+            if (t == null) return "?";
+            if (!t.IsGenericType) return t.Name;
+            var root = t.Name; var i = root.IndexOf('`'); if (i > 0) root = root.Substring(0, i);
+            return root + "<" + string.Join(",", t.GetGenericArguments().Select(x => x.Name).ToArray()) + ">";
+        }
+
+#pragma warning disable CS0219 // keep shim helpers even if temporarily unused
         static bool TrySetBoolProp(object target, string name, bool value)
         {
             if (target == null) return false;
