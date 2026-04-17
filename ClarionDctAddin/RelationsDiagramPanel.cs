@@ -14,6 +14,7 @@ namespace ClarionDctAddin
     {
         static readonly Color CanvasBg    = Color.White;
         static readonly Color NodeFill    = Color.FromArgb(250, 252, 255);
+        static readonly Color NodeFillSel = Color.FromArgb(220, 232, 245);
         static readonly Color NodeBorder  = Color.FromArgb(45,  90, 135);
         static readonly Color NodeText    = Color.FromArgb(30,  40,  55);
         static readonly Color NodeSub     = Color.FromArgb(100, 115, 135);
@@ -21,58 +22,102 @@ namespace ClarionDctAddin
         static readonly Color EdgeLabel   = Color.FromArgb(70,  95,  125);
         static readonly Color ToolbarBg   = Color.FromArgb(225, 230, 235);
 
-        const int NodeWidth   = 170;
-        const int NodeHeight  = 56;
-        const int ColSpacing  = 240;
-        const int RowSpacing  = 80;
+        const int NodeWidth    = 170;
+        const int NodeHeight   = 56;
+        const int ColSpacing   = 240;
+        const int RowSpacing   = 80;
+        const int GridGap      = 40;
         const int CanvasMargin = 24;
+
+        const float MinZoom = 0.25f;
+        const float MaxZoom = 3.0f;
+
+        enum LayoutMode { Layered, Alphabetical, ByFieldCount, ByConnections, ByDriver, Circle }
 
         readonly object dict;
         readonly List<TableNode> nodes = new List<TableNode>();
         readonly List<RelEdge>   edges = new List<RelEdge>();
 
-        Panel canvas;
-        Label emptyLabel;
+        Panel    canvas;
+        Label    emptyLabel;
+        ComboBox cboLayout;
+        Label    lblZoom;
+
+        Size  contentSize = new Size(800, 600);
+        float zoom        = 1.0f;
+
+        TableNode draggedNode;
+        Point     dragOffset;
 
         public RelationsDiagramPanel(object dict)
         {
             this.dict = dict;
             BuildUi();
             BuildGraph();
-            LayoutNodes();
+            DoLayout(LayoutMode.Layered);
         }
 
+        // --- UI ---
         void BuildUi()
         {
             BackColor = CanvasBg;
 
-            var toolbar = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 40,
-                BackColor = ToolbarBg,
-                Padding = new Padding(12, 6, 12, 6)
-            };
-            var btnInspect = new Button
-            {
-                Text = "Inspect first relation...",
-                Width = 200,
-                Height = 28,
-                FlatStyle = FlatStyle.System,
-                Dock = DockStyle.Right
-            };
-            btnInspect.Click += delegate { InspectFirstRelation(); };
-            toolbar.Controls.Add(btnInspect);
+            var toolbar = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = ToolbarBg, Padding = new Padding(10, 6, 10, 6) };
 
-            var scrollHost = new Panel
+            var lblLayout = new Label { Text = "Layout:", AutoSize = true, Top = 8, Left = 8, Font = new Font("Segoe UI", 9F), ForeColor = NodeText };
+            cboLayout = new ComboBox
             {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                BackColor = CanvasBg
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 180, Top = 5, Left = 65,
+                Font = new Font("Segoe UI", 9F)
             };
+            cboLayout.Items.AddRange(new object[]
+            {
+                "Layered (by dependency)",
+                "Alphabetical",
+                "By field count",
+                "By connections",
+                "By driver",
+                "Circle"
+            });
+            cboLayout.SelectedIndex = 0;
+            cboLayout.SelectedIndexChanged += delegate { DoLayout((LayoutMode)cboLayout.SelectedIndex); };
+
+            var btnRelayout = MakeToolbarButton("Re-layout", 255);
+            btnRelayout.Click += delegate { DoLayout((LayoutMode)cboLayout.SelectedIndex); };
+
+            var btnZoomOut = MakeToolbarButton("-", 360, 40);
+            btnZoomOut.Click += delegate { SetZoom(zoom / 1.15f, ViewportCenter()); };
+
+            lblZoom = new Label { Top = 10, Left = 405, Width = 55, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 9F), ForeColor = NodeText, Text = "100%" };
+
+            var btnZoomIn = MakeToolbarButton("+", 465, 40);
+            btnZoomIn.Click += delegate { SetZoom(zoom * 1.15f, ViewportCenter()); };
+
+            var btn100 = MakeToolbarButton("100%", 510, 60);
+            btn100.Click += delegate { SetZoom(1.0f, ViewportCenter()); };
+
+            var btnFit = MakeToolbarButton("Fit", 575, 50);
+            btnFit.Click += delegate { FitToView(); };
+
+            var rightSide = new Panel { Dock = DockStyle.Right, Width = 220, BackColor = ToolbarBg };
+            var btnInspect = MakeToolbarButton("Inspect first relation...", 10, 200);
+            btnInspect.Click += delegate { InspectFirstRelation(); };
+            rightSide.Controls.Add(btnInspect);
+
+            toolbar.Controls.AddRange(new Control[] { lblLayout, cboLayout, btnRelayout, btnZoomOut, lblZoom, btnZoomIn, btn100, btnFit, rightSide });
+
+            var scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = CanvasBg };
+
             canvas = new Panel { BackColor = CanvasBg };
-            canvas.Paint += OnCanvasPaint;
+            canvas.Paint      += OnCanvasPaint;
+            canvas.MouseDown  += OnCanvasMouseDown;
+            canvas.MouseMove  += OnCanvasMouseMove;
+            canvas.MouseUp    += OnCanvasMouseUp;
+            canvas.MouseLeave += delegate { canvas.Cursor = Cursors.Default; };
+
             scrollHost.Controls.Add(canvas);
+            scrollHost.MouseWheel += OnWheel;
 
             emptyLabel = new Label
             {
@@ -89,19 +134,30 @@ namespace ClarionDctAddin
             Controls.Add(toolbar);
         }
 
+        Button MakeToolbarButton(string text, int left, int width = 80)
+        {
+            return new Button
+            {
+                Text = text, Left = left, Top = 5, Width = width, Height = 28,
+                FlatStyle = FlatStyle.System, Font = new Font("Segoe UI", 9F)
+            };
+        }
+
+        // --- graph build ---
         void BuildGraph()
         {
             var byName = new Dictionary<string, TableNode>(StringComparer.OrdinalIgnoreCase);
             foreach (var t in DictModel.GetTables(dict))
             {
                 var name = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
-                var node = new TableNode(name, DictModel.CountEnumerable(t, "Fields"));
+                var node = new TableNode(
+                    name,
+                    DictModel.CountEnumerable(t, "Fields"),
+                    DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "");
                 nodes.Add(node);
                 byName[name] = node;
             }
 
-            // Collect DDRelation objects from both the dictionary-level pool
-            // and per-table Relations lists (dedupe by reference).
             var relSet = new List<object>();
             var seen = new HashSet<object>();
             AddAll(relSet, seen, DictModel.GetProp(dict, "RelationsPool"));
@@ -110,8 +166,8 @@ namespace ClarionDctAddin
 
             foreach (var r in relSet)
             {
-                var parent = GetRelatedTable(r, parentSide: true);
-                var child  = GetRelatedTable(r, parentSide: false);
+                var parent = GetRelatedTable(r, true);
+                var child  = GetRelatedTable(r, false);
                 if (parent == null || child == null) continue;
 
                 var pName = DictModel.AsString(DictModel.GetProp(parent, "Name"));
@@ -127,9 +183,9 @@ namespace ClarionDctAddin
                     DictModel.AsString(DictModel.GetProp(r, "Name")) ?? "", r));
             }
 
-            // If there are no relations at all, hide everything and show the empty message.
-            if (edges.Count == 0)
+            if (nodes.Count == 0)
             {
+                emptyLabel.Text = "No tables in this dictionary.";
                 emptyLabel.Visible = true;
                 canvas.Visible = false;
             }
@@ -152,28 +208,42 @@ namespace ClarionDctAddin
             {
                 var v = DictModel.GetProp(relation, n);
                 if (v == null) continue;
-                // Ensure it looks like a table — has a Name property and isn't a primitive.
                 if (v is string || v.GetType().IsPrimitive) continue;
                 if (DictModel.GetProp(v, "Name") != null) return v;
             }
             return null;
         }
 
-        void LayoutNodes()
+        // --- layout ---
+        void DoLayout(LayoutMode mode)
         {
             if (nodes.Count == 0) return;
+            switch (mode)
+            {
+                case LayoutMode.Layered:       LayoutLayered();     break;
+                case LayoutMode.Alphabetical:  LayoutGrid(nodes.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase)); break;
+                case LayoutMode.ByFieldCount:  LayoutGrid(nodes.OrderByDescending(n => n.FieldCount).ThenBy(n => n.Name)); break;
+                case LayoutMode.ByConnections: LayoutGrid(nodes.OrderByDescending(CountConnections).ThenBy(n => n.Name)); break;
+                case LayoutMode.ByDriver:      LayoutGroupedGrid(nodes.OrderBy(n => n.Driver).ThenBy(n => n.Name)); break;
+                case LayoutMode.Circle:        LayoutCircle();      break;
+            }
+            UpdateCanvasSize();
+            canvas.Invalidate();
+        }
 
-            // Assign each node a layer via BFS from roots (no incoming edges).
+        int CountConnections(TableNode n)
+        {
+            return edges.Count(e => e.From == n || e.To == n);
+        }
+
+        void LayoutLayered()
+        {
             var incoming = nodes.ToDictionary(n => n, n => 0);
             foreach (var e in edges) if (incoming.ContainsKey(e.To)) incoming[e.To]++;
 
             var layer = new Dictionary<TableNode, int>();
             var q = new Queue<TableNode>();
-            foreach (var n in nodes.Where(x => incoming[x] == 0))
-            {
-                layer[n] = 0;
-                q.Enqueue(n);
-            }
+            foreach (var n in nodes.Where(x => incoming[x] == 0)) { layer[n] = 0; q.Enqueue(n); }
             if (q.Count == 0 && nodes.Count > 0) { layer[nodes[0]] = 0; q.Enqueue(nodes[0]); }
 
             while (q.Count > 0)
@@ -193,8 +263,6 @@ namespace ClarionDctAddin
             }
             foreach (var n in nodes) if (!layer.ContainsKey(n)) layer[n] = 0;
 
-            // Isolated tables (no edges at all) go into a trailing column so they
-            // don't dilute the relationship columns.
             var isolated = nodes.Where(n => !edges.Any(e => e.From == n || e.To == n)).ToList();
             int maxLayer = layer.Values.DefaultIfEmpty(0).Max();
             if (isolated.Count > 0)
@@ -203,11 +271,8 @@ namespace ClarionDctAddin
                 foreach (var n in isolated) layer[n] = isoLayer;
             }
 
-            var byLayer = nodes.GroupBy(n => layer[n]).OrderBy(g => g.Key).ToList();
-            int maxBottom = 0;
-            int maxRight = 0;
             int colIndex = 0;
-            foreach (var grp in byLayer)
+            foreach (var grp in nodes.GroupBy(n => layer[n]).OrderBy(g => g.Key))
             {
                 int x = CanvasMargin + colIndex * ColSpacing;
                 int y = CanvasMargin;
@@ -215,21 +280,191 @@ namespace ClarionDctAddin
                 {
                     n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
                     y += NodeHeight + (RowSpacing - NodeHeight);
-                    maxBottom = Math.Max(maxBottom, y);
-                    maxRight  = Math.Max(maxRight, x + NodeWidth);
                 }
                 colIndex++;
             }
+        }
 
-            canvas.Size = new Size(maxRight + CanvasMargin, maxBottom + CanvasMargin);
+        void LayoutGrid(IEnumerable<TableNode> ordered)
+        {
+            var list = ordered.ToList();
+            int cols = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(list.Count) * 1.2));
+            int col = 0, row = 0;
+            foreach (var n in list)
+            {
+                int x = CanvasMargin + col * (NodeWidth + GridGap);
+                int y = CanvasMargin + row * (NodeHeight + GridGap);
+                n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                col++;
+                if (col >= cols) { col = 0; row++; }
+            }
+        }
+
+        void LayoutGroupedGrid(IEnumerable<TableNode> ordered)
+        {
+            // Group by driver: one column per driver, nodes stacked vertically.
+            var groups = ordered.GroupBy(n => string.IsNullOrEmpty(n.Driver) ? "(no driver)" : n.Driver).ToList();
+            int x = CanvasMargin;
+            foreach (var g in groups)
+            {
+                int y = CanvasMargin;
+                foreach (var n in g.OrderBy(nn => nn.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                    y += NodeHeight + 20;
+                }
+                x += NodeWidth + GridGap + 20;
+            }
+        }
+
+        void LayoutCircle()
+        {
+            int count = nodes.Count;
+            double radius = Math.Max(180, count * 26);
+            double centerX = CanvasMargin + radius + NodeWidth / 2.0;
+            double centerY = CanvasMargin + radius + NodeHeight / 2.0;
+            int i = 0;
+            foreach (var n in nodes.OrderBy(nn => nn.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                double angle = 2 * Math.PI * i / count - Math.PI / 2;
+                int x = (int)(centerX + Math.Cos(angle) * radius - NodeWidth / 2.0);
+                int y = (int)(centerY + Math.Sin(angle) * radius - NodeHeight / 2.0);
+                n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                i++;
+            }
+        }
+
+        void UpdateCanvasSize()
+        {
+            int maxR = 0, maxB = 0;
+            foreach (var n in nodes)
+            {
+                if (n.Bounds.Right  > maxR) maxR = n.Bounds.Right;
+                if (n.Bounds.Bottom > maxB) maxB = n.Bounds.Bottom;
+            }
+            contentSize = new Size(maxR + CanvasMargin, maxB + CanvasMargin);
+            canvas.Size = new Size(
+                Math.Max(10, (int)(contentSize.Width * zoom)),
+                Math.Max(10, (int)(contentSize.Height * zoom)));
+        }
+
+        // --- zoom ---
+        Point ViewportCenter()
+        {
+            var host = canvas.Parent;
+            return host == null
+                ? new Point(canvas.Width / 2, canvas.Height / 2)
+                : new Point(host.ClientSize.Width / 2, host.ClientSize.Height / 2);
+        }
+
+        void SetZoom(float newZoom, Point anchor)
+        {
+            newZoom = Math.Max(MinZoom, Math.Min(MaxZoom, newZoom));
+            if (Math.Abs(newZoom - zoom) < 0.001f) return;
+
+            var host = canvas.Parent as Panel;
+            // Logical point under the anchor before zoom.
+            float lx = (anchor.X - canvas.Left) / zoom;
+            float ly = (anchor.Y - canvas.Top)  / zoom;
+
+            zoom = newZoom;
+            UpdateCanvasSize();
+
+            // Adjust scroll so same logical point stays near the anchor.
+            if (host != null)
+            {
+                int desiredLeft = anchor.X - (int)(lx * zoom);
+                int desiredTop  = anchor.Y - (int)(ly * zoom);
+                host.AutoScrollPosition = new Point(-desiredLeft, -desiredTop);
+            }
+            UpdateZoomLabel();
             canvas.Invalidate();
         }
 
+        void FitToView()
+        {
+            var host = canvas.Parent;
+            if (host == null || contentSize.Width == 0 || contentSize.Height == 0) return;
+            float zx = (float)host.ClientSize.Width  / contentSize.Width;
+            float zy = (float)host.ClientSize.Height / contentSize.Height;
+            SetZoom(Math.Min(zx, zy) * 0.95f, ViewportCenter());
+        }
+
+        void UpdateZoomLabel()
+        {
+            if (lblZoom != null) lblZoom.Text = ((int)Math.Round(zoom * 100)) + "%";
+        }
+
+        void OnWheel(object sender, MouseEventArgs e)
+        {
+            if ((Control.ModifierKeys & Keys.Control) != Keys.Control) return;
+            SetZoom(zoom * (e.Delta > 0 ? 1.1f : 1f / 1.1f),
+                canvas.Parent.PointToClient(Cursor.Position));
+        }
+
+        // --- drag ---
+        Point ScreenToLogical(Point screenFromCanvas)
+        {
+            return new Point((int)(screenFromCanvas.X / zoom), (int)(screenFromCanvas.Y / zoom));
+        }
+
+        void OnCanvasMouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            var p = ScreenToLogical(e.Location);
+            // Topmost hit wins — iterate back to front.
+            for (int i = nodes.Count - 1; i >= 0; i--)
+            {
+                if (nodes[i].Bounds.Contains(p))
+                {
+                    draggedNode = nodes[i];
+                    dragOffset  = new Point(p.X - draggedNode.Bounds.X, p.Y - draggedNode.Bounds.Y);
+                    // Bring to front so it paints on top of overlapping nodes.
+                    nodes.RemoveAt(i);
+                    nodes.Add(draggedNode);
+                    canvas.Cursor = Cursors.SizeAll;
+                    canvas.Invalidate();
+                    return;
+                }
+            }
+        }
+
+        void OnCanvasMouseMove(object sender, MouseEventArgs e)
+        {
+            if (draggedNode != null)
+            {
+                var p = ScreenToLogical(e.Location);
+                draggedNode.Bounds = new Rectangle(
+                    p.X - dragOffset.X,
+                    p.Y - dragOffset.Y,
+                    draggedNode.Bounds.Width,
+                    draggedNode.Bounds.Height);
+                canvas.Invalidate();
+                return;
+            }
+            var lp = ScreenToLogical(e.Location);
+            bool over = nodes.Any(n => n.Bounds.Contains(lp));
+            canvas.Cursor = over ? Cursors.SizeAll : Cursors.Default;
+        }
+
+        void OnCanvasMouseUp(object sender, MouseEventArgs e)
+        {
+            if (draggedNode != null)
+            {
+                draggedNode = null;
+                UpdateCanvasSize();
+                canvas.Invalidate();
+            }
+            canvas.Cursor = Cursors.Default;
+        }
+
+        // --- paint ---
         void OnCanvasPaint(object sender, PaintEventArgs e)
         {
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.ScaleTransform(zoom, zoom);
 
             using (var edgePen = new Pen(EdgeColor, 1.3f))
             using (var labelFont = new Font("Segoe UI", 7.5F))
@@ -254,34 +489,37 @@ namespace ClarionDctAddin
                 }
             }
 
-            using (var nodeFill = new SolidBrush(NodeFill))
-            using (var nodePen  = new Pen(NodeBorder, 1.5f))
-            using (var titleFont = new Font("Segoe UI Semibold", 9F))
-            using (var subFont   = new Font("Segoe UI", 8F))
-            using (var titleBrush = new SolidBrush(NodeText))
-            using (var subBrush   = new SolidBrush(NodeSub))
+            using (var nodeFill    = new SolidBrush(NodeFill))
+            using (var nodeFillSel = new SolidBrush(NodeFillSel))
+            using (var nodePen     = new Pen(NodeBorder, 1.5f))
+            using (var nodePenSel  = new Pen(NodeBorder, 2.2f))
+            using (var titleFont   = new Font("Segoe UI Semibold", 9F))
+            using (var subFont     = new Font("Segoe UI", 8F))
+            using (var titleBrush  = new SolidBrush(NodeText))
+            using (var subBrush    = new SolidBrush(NodeSub))
             {
                 var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
                 foreach (var n in nodes)
                 {
                     var r = n.Bounds;
+                    bool isDragged = n == draggedNode;
                     using (var path = RoundedRect(r, 6))
                     {
-                        g.FillPath(nodeFill, path);
-                        g.DrawPath(nodePen,  path);
+                        g.FillPath(isDragged ? nodeFillSel : nodeFill, path);
+                        g.DrawPath(isDragged ? nodePenSel  : nodePen,  path);
                     }
                     var title = new Rectangle(r.X, r.Y + 6, r.Width, 20);
                     var sub   = new Rectangle(r.X, r.Y + 28, r.Width, 20);
                     g.DrawString(n.Name, titleFont, titleBrush, title, fmt);
-                    g.DrawString(n.FieldCount + " fields", subFont, subBrush, sub, fmt);
+                    var subText = n.FieldCount + " fields";
+                    if (!string.IsNullOrEmpty(n.Driver)) subText += "  ·  " + n.Driver;
+                    g.DrawString(subText, subFont, subBrush, sub, fmt);
                 }
             }
         }
 
         static void ComputeEdgePoints(Rectangle a, Rectangle b, out Point p1, out Point p2)
         {
-            // Exit on the right side of parent, enter on the left side of child,
-            // unless child is to the left — in which case flip.
             if (b.X >= a.Right)
             {
                 p1 = new Point(a.Right, a.Y + a.Height / 2);
@@ -294,7 +532,6 @@ namespace ClarionDctAddin
             }
             else
             {
-                // Overlapping X ranges — use top/bottom.
                 if (b.Y >= a.Bottom)
                 {
                     p1 = new Point(a.X + a.Width / 2, a.Bottom);
@@ -320,6 +557,7 @@ namespace ClarionDctAddin
             return p;
         }
 
+        // --- diagnostic ---
         void InspectFirstRelation()
         {
             object rel = null;
@@ -361,8 +599,7 @@ namespace ClarionDctAddin
 
             using (var f = new Form
             {
-                Text = "Inspect relation",
-                Width = 900, Height = 640,
+                Text = "Inspect relation", Width = 900, Height = 640,
                 StartPosition = FormStartPosition.CenterParent,
                 ShowIcon = false, ShowInTaskbar = false,
                 BackColor = Color.FromArgb(245, 247, 250)
@@ -387,17 +624,18 @@ namespace ClarionDctAddin
         sealed class TableNode
         {
             public readonly string Name;
-            public readonly int FieldCount;
+            public readonly int    FieldCount;
+            public readonly string Driver;
             public Rectangle Bounds;
-            public TableNode(string name, int fc) { Name = name; FieldCount = fc; }
+            public TableNode(string name, int fc, string drv) { Name = name; FieldCount = fc; Driver = drv; }
         }
 
         sealed class RelEdge
         {
             public readonly TableNode From;
             public readonly TableNode To;
-            public readonly string   Name;
-            public readonly object   Relation;
+            public readonly string    Name;
+            public readonly object    Relation;
             public RelEdge(TableNode f, TableNode t, string n, object r)
             { From = f; To = t; Name = n; Relation = r; }
         }
