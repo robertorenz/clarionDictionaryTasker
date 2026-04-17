@@ -23,6 +23,9 @@
 			<MenuItem id    = "DictToolsBatchCopy"
 			          label = "Batch copy fields..."
 			          class = "ClarionDctAddin.BatchCopyFieldsCommand"/>
+			<MenuItem id    = "DictToolsBatchCopyKeys"
+			          label = "Batch copy keys..."
+			          class = "ClarionDctAddin.BatchCopyKeysCommand"/>
 			<MenuItem id    = "DictToolsSep1" type = "Separator"/>
 			<MenuItem id    = "DictToolsHello"
 			          label = "Hello (addin loaded)"
