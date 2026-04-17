@@ -233,6 +233,13 @@ namespace ClarionDctAddin
             TrySetObjectField(newKey, "parentItem", targetTable);
             TrySetBoolField  (newKey, "itemHasChanged",  true);
 
+            // Order must be unique per file in the native KEYS-BYORDER index.
+            // The copy inherits the source's Order, which will collide with an
+            // existing target-key order and throw "Creates Duplicate Key". Push
+            // the new key to the end of the target list.
+            if (!TrySetIntField(newKey, "order", n0))
+                TrySetProp(newKey, "Order", n0);
+
             // 4. Remap components BEFORE registration so the key looks consistent
             //    when InsertKey validates.
             RemapComponents(newKey, targetTable, steps);
@@ -543,6 +550,34 @@ namespace ClarionDctAddin
                 if (f != null)
                 {
                     try { f.SetValue(target, value); return true; } catch { return false; }
+                }
+                t = t.BaseType;
+            }
+            return false;
+        }
+
+        static bool TrySetIntField(object target, string name, int value)
+        {
+            if (target == null) return false;
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                var f = t.GetField(name,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (f != null)
+                {
+                    try
+                    {
+                        if      (f.FieldType == typeof(int))    f.SetValue(target, value);
+                        else if (f.FieldType == typeof(short))  f.SetValue(target, (short)value);
+                        else if (f.FieldType == typeof(long))   f.SetValue(target, (long)value);
+                        else if (f.FieldType == typeof(uint))   f.SetValue(target, (uint)value);
+                        else if (f.FieldType == typeof(ushort)) f.SetValue(target, (ushort)value);
+                        else if (f.FieldType == typeof(ulong))  f.SetValue(target, (ulong)value);
+                        else f.SetValue(target, Convert.ChangeType(value, f.FieldType));
+                        return true;
+                    }
+                    catch { return false; }
                 }
                 t = t.BaseType;
             }
