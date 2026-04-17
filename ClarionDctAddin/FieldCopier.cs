@@ -122,17 +122,17 @@ namespace ClarionDctAddin
             {
                 if (item.Action == PlanAction.Skip) { result.SkippedCount++; continue; }
 
+                var tag = item.TargetTableName + "." + item.FieldLabel;
                 try
                 {
-                    CopyAndAdd(item.SourceField, item.TargetTable);
+                    CopyAndAdd(item.SourceField, item.TargetTable, result, tag);
                     result.AddedCount++;
                 }
                 catch (Exception ex)
                 {
                     result.FailedCount++;
                     var inner = ex.InnerException ?? ex;
-                    result.Messages.Add(item.TargetTableName + "." + item.FieldLabel + ": "
-                        + inner.GetType().Name + " - " + inner.Message);
+                    result.Messages.Add(tag + ": " + inner.GetType().Name + " - " + inner.Message);
                 }
             }
 
@@ -205,9 +205,12 @@ namespace ClarionDctAddin
             catch (Exception ex) { log.Add(tag + "=ERR(" + (ex.InnerException ?? ex).GetType().Name + ")"); }
         }
 
-        static void CopyAndAdd(object sourceField, object targetTable)
+        static void CopyAndAdd(object sourceField, object targetTable, ApplyResult result, string tag)
         {
-            // DDField inherits Copy(DataDictionaryItem parent, bool quiet) : DataDictionaryItem
+            var steps = new List<string>();
+
+            // 1. Clone. quiet=false so ItemAdded events fire for subscribers like
+            //    the persistence-tracker UniqueDataDictionaryItemList<T>.
             var copyMethod = sourceField.GetType()
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .FirstOrDefault(m =>
@@ -217,52 +220,76 @@ namespace ClarionDctAddin
             if (copyMethod == null)
                 throw new InvalidOperationException("Cannot find Copy(parent, bool) on " + sourceField.GetType().FullName);
 
-            // quiet = false: the UniqueDataDictionaryItemList<T> relies on the ItemAdded
-            // event to register a field in its "added items" list. That list is what
-            // Clarion's save code iterates over. Quiet mode suppresses that event, so
-            // the field never reaches disk even though it's visible in the editor.
             object newField;
             try { newField = copyMethod.Invoke(sourceField, new object[] { targetTable, false }); }
             catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
             if (newField == null) throw new InvalidOperationException("Copy returned null.");
+            steps.Add("copy");
 
-            // Copy may already have registered the field on the parent — check before re-adding.
+            // 2. Did Copy already register the field in the target's Fields list?
             bool alreadyIn = false;
             var targetFields = DictModel.GetProp(targetTable, "Fields") as IEnumerable;
             if (targetFields != null)
-            {
                 foreach (var f in targetFields)
                     if (ReferenceEquals(f, newField)) { alreadyIn = true; break; }
-            }
 
-            if (!alreadyIn)
+            if (alreadyIn)
             {
-                var addMethod = targetTable.GetType()
-                    .GetMethod("AddField", BindingFlags.Public | BindingFlags.Instance);
-                if (addMethod == null)
-                    throw new InvalidOperationException("Cannot find AddField on " + targetTable.GetType().FullName);
-                try { addMethod.Invoke(targetTable, new object[] { newField }); }
-                catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
+                steps.Add("preReg");
+            }
+            else
+            {
+                // 3. Primary: internal DDFile.InsertField(DDField) — the path Clarion's
+                //    editor uses for new fields. Registers the field in the collection's
+                //    "added items" tracker which the save path iterates.
+                //    Falls back to public AddField if InsertField is absent.
+                var insertField = targetTable.GetType().GetMethod(
+                    "InsertField",
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { newField.GetType() }, null);
+                if (insertField != null)
+                {
+                    try { insertField.Invoke(targetTable, new object[] { newField }); steps.Add("InsertField"); }
+                    catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
+                }
+                else
+                {
+                    var addField = targetTable.GetType().GetMethod(
+                        "AddField",
+                        BindingFlags.Public | BindingFlags.Instance,
+                        null, new[] { newField.GetType() }, null);
+                    if (addField == null)
+                        throw new InvalidOperationException("Neither InsertField nor AddField on " + targetTable.GetType().FullName);
+                    try { addField.Invoke(targetTable, new object[] { newField }); steps.Add("AddField"); }
+                    catch (TargetInvocationException tie) { throw tie.InnerException ?? tie; }
+                }
             }
 
-            // Post-insert housekeeping so the field actually persists:
-            //   SetInFile()        on DDField — flips IsInFile=true
-            //   ChildListTouched() on the DDFile and DDDataDictionary — marks dirty for save
-            // All internal methods — best-effort and non-fatal.
-            TryInvokeNoArgs(newField,    "SetInFile",         true);
-            TryInvokeNoArgs(targetTable, "ChildListTouched",  true);
+            // 4. SetInFile flips IsInFile=true so the save code treats it as persistent.
+            if (TryInvokeNoArgs(newField, "SetInFile", true)) steps.Add("SetInFile");
+
+            // 5. ChildListTouched on file + dict so both know their child list changed.
+            if (TryInvokeNoArgs(targetTable, "ChildListTouched", true)) steps.Add("file.ChildListTouched");
             var dict = DictModel.GetProp(targetTable, "DataDictionary");
-            TryInvokeNoArgs(dict,        "ChildListTouched",  true);
+            if (TryInvokeNoArgs(dict, "ChildListTouched", true)) steps.Add("dict.ChildListTouched");
+
+            // 6. Diagnostic — report the post-state of the new field.
+            var isInFile = DictModel.AsString(DictModel.GetProp(newField, "IsInFile")) ?? "?";
+            var touched  = DictModel.AsString(DictModel.GetProp(newField, "Touched"))  ?? "?";
+            steps.Add("IsInFile=" + isInFile);
+            steps.Add("Touched=" + touched);
+
+            result.Messages.Add(tag + " : " + string.Join(" > ", steps.ToArray()));
         }
 
-        static void TryInvokeNoArgs(object target, string methodName, bool includeNonPublic)
+        static bool TryInvokeNoArgs(object target, string methodName, bool includeNonPublic)
         {
-            if (target == null) return;
+            if (target == null) return false;
             var flags = BindingFlags.Public | BindingFlags.Instance;
             if (includeNonPublic) flags |= BindingFlags.NonPublic;
             var m = target.GetType().GetMethod(methodName, flags, null, Type.EmptyTypes, null);
-            if (m == null) return;
-            try { m.Invoke(target, null); } catch { /* diagnostic-only */ }
+            if (m == null) return false;
+            try { m.Invoke(target, null); return true; } catch { return false; }
         }
 
         static object FindFieldByLabel(object table, string label)
