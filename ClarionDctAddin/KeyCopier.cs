@@ -237,13 +237,34 @@ namespace ClarionDctAddin
             //    when InsertKey validates.
             RemapComponents(newKey, targetTable, steps);
 
-            // 5. Register. Mirror the field path: try internal InsertKey first,
-            //    then public AddKey, then the collection's own Add(DDKey).
-            bool registered = IsInKeys(newKey, targetTable);
-            if (registered) steps.Add("preReg");
+            // 5a. Native-side seed: DDKey.Insert(int position). For fields the
+            //     native record was created inside DDFile.InsertField (internal).
+            //     DDFile has NO internal InsertKey equivalent, so the only API
+            //     we have that reaches the native layer for keys is DDKey.Insert
+            //     on the key instance itself. Run it even if it throws — it may
+            //     still seed native state before bailing.
+            {
+                var selfInsert = newKey.GetType().GetMethod("Insert",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null, new[] { typeof(int) }, null);
+                if (selfInsert != null)
+                {
+                    try
+                    {
+                        selfInsert.Invoke(newKey, new object[] { n0 });
+                        steps.Add("self.Insert");
+                    }
+                    catch (TargetInvocationException tie)
+                    {
+                        steps.Add("self.Insert:EX(" + (tie.InnerException ?? tie).GetType().Name + ")");
+                    }
+                }
+            }
 
-            if (!registered)
-                registered = TryInvokeOneArg(targetTable, "InsertKey", BindingFlags.NonPublic, newKey, steps, "InsertKey");
+            // 5b. Managed-side registration: AddKey (public) or the collection's
+            //     own Add(DDKey) as a fallback.
+            bool registered = IsInKeys(newKey, targetTable);
+            if (registered) steps.Add("managedReg");
 
             if (!registered)
                 registered = TryInvokeOneArg(targetTable, "AddKey", BindingFlags.Public, newKey, steps, "AddKey");
@@ -272,6 +293,34 @@ namespace ClarionDctAddin
 
             int n1 = CountEnum(DictModel.GetProp(targetTable, "Keys"));
             steps.Add("n1=" + n1);
+
+            // 5c. Persistence tracker check. If the key isn't in Keys.addedItems
+            //     the save pass will skip it entirely (exactly the silent-no-write
+            //     pattern we saw earlier for fields).
+            {
+                var keysColl = DictModel.GetProp(targetTable, "Keys");
+                if (keysColl != null)
+                {
+                    var added = GetNonPublicField(keysColl, "addedItems") as IDictionary;
+                    if (added != null)
+                    {
+                        bool inTracker = false;
+                        foreach (var v in added.Values) if (ReferenceEquals(v, newKey)) { inTracker = true; break; }
+                        steps.Add("addedItems[" + added.Count + "]" + (inTracker ? ":IN" : ":OUT"));
+
+                        // If the tracker missed the key, add it directly so save sees it.
+                        if (!inTracker)
+                        {
+                            var itemGuid = DictModel.GetProp(newKey, "Id");
+                            if (itemGuid != null)
+                            {
+                                try { added.Add(itemGuid, newKey); steps.Add("tracker+="); }
+                                catch { steps.Add("tracker:fail"); }
+                            }
+                        }
+                    }
+                }
+            }
 
             // 6. Post-reg repair. Same rationale: keep stored off for keys.
             TrySetObjectField(newKey, "parentItem", targetTable);
@@ -498,6 +547,20 @@ namespace ClarionDctAddin
                 t = t.BaseType;
             }
             return false;
+        }
+
+        static object GetNonPublicField(object target, string name)
+        {
+            if (target == null) return null;
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                var f = t.GetField(name,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (f != null) { try { return f.GetValue(target); } catch { } }
+                t = t.BaseType;
+            }
+            return null;
         }
 
         static bool TrySetBoolField(object target, string name, bool value)
