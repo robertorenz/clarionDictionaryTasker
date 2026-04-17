@@ -295,19 +295,24 @@ namespace ClarionDctAddin
             var dict = DictModel.GetProp(targetTable, "DataDictionary");
             if (TryInvokeNoArgs(dict, "ChildListTouched", true)) steps.Add("dict.ChildListTouched");
 
-            // 7. Diagnostic — dump UniqueDataDictionaryItemList<T> non-public state once
-            //    so we can see the real name of the persistence tracker.
-            if (!CollectionInternalsDumped && targetFieldsCollection != null)
+            // 7. Diagnostics — one-time dumps of structures likely involved in persistence.
+            if (!CollectionInternalsDumped)
             {
                 CollectionInternalsDumped = true;
-                DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-collection ");
+                if (targetFieldsCollection != null)
+                    DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-coll.");
+                DumpNonPublicState(targetTable, result.Messages, "DDFile.");
+                var fc = DictModel.GetProp(targetTable, "FC");
+                if (fc != null) DumpNonPublicState(fc, result.Messages, "FC.");
             }
 
-            // 8. Final state of the new field.
-            var isInFile = DictModel.AsString(DictModel.GetProp(newField, "IsInFile")) ?? "?";
-            var touched  = DictModel.AsString(DictModel.GetProp(newField, "Touched"))  ?? "?";
-            steps.Add("IsInFile=" + isInFile);
-            steps.Add("Touched=" + touched);
+            // 8. Per-field state — extra properties that save may consult.
+            steps.Add("File="    + (DictModel.GetProp(newField, "File")     == null ? "null" : "set"));
+            steps.Add("Parent="  + (DictModel.GetProp(newField, "Parent")   == null ? "null" : "set"));
+            steps.Add("Offset="  + (DictModel.AsString(DictModel.GetProp(newField, "Offset")) ?? "?"));
+            steps.Add("Order="   + (DictModel.AsString(DictModel.GetProp(newField, "Order"))  ?? "?"));
+            steps.Add("IsInFile=" + (DictModel.AsString(DictModel.GetProp(newField, "IsInFile")) ?? "?"));
+            steps.Add("Touched=" + (DictModel.AsString(DictModel.GetProp(newField, "Touched"))  ?? "?"));
 
             result.Messages.Add(tag + " : " + string.Join(" > ", steps.ToArray()));
         }
