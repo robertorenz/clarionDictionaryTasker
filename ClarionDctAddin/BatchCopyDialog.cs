@@ -292,7 +292,8 @@ namespace ClarionDctAddin
                 var dr = dlg.ShowDialog(this);
                 if (dr != DialogResult.OK) return;
 
-                var result = FieldCopier.Apply(plan, DictModel.GetDictionaryFileName(dict));
+                var view   = DictModel.GetActiveDictionaryView();
+                var result = FieldCopier.Apply(plan, dict, view, DictModel.GetDictionaryFileName(dict));
                 ShowResult(result);
             }
         }

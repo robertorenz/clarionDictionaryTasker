@@ -86,7 +86,7 @@ namespace ClarionDctAddin
             return dctPath + ".tasker-bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
         }
 
-        public static ApplyResult Apply(List<PlanItem> plan, string dctPath)
+        public static ApplyResult Apply(List<PlanItem> plan, object dict, object viewContent, string dctPath)
         {
             var result = new ApplyResult();
 
@@ -135,7 +135,74 @@ namespace ClarionDctAddin
                         + inner.GetType().Name + " - " + inner.Message);
                 }
             }
+
+            if (result.AddedCount > 0)
+            {
+                ForceMarkDirty(dict, viewContent, result);
+            }
             return result;
+        }
+
+        // The editor's Save button is driven by IViewContent.IsDirty (from SharpDevelop's
+        // ICanBeDirty). Setting it straight through on the DataDictionaryViewContent is
+        // the most reliable way to tell Clarion "yes, there are unsaved changes, enable Save."
+        // We also try a handful of model-side mark-dirty paths so the dictionary's own
+        // persistence layer treats the new fields as pending-save rather than phantoms.
+        static void ForceMarkDirty(object dict, object viewContent, ApplyResult result)
+        {
+            var log = new List<string>();
+
+            if (TrySetBool(dict, "IsDirty", true, log, "dict.IsDirty")
+                || TrySetField(dict, "isDirty", true, log, "dict.isDirty"))
+            { /* logged inside */ }
+            TryInvokeNoArgs(dict, "DoIsDirtyChanged", true, log, "dict.DoIsDirtyChanged");
+            TryInvokeNoArgs(dict, "ChildListTouched", true, log, "dict.ChildListTouched");
+
+            if (viewContent != null)
+            {
+                if (!TrySetBool(viewContent, "IsDirty", true, log, "view.IsDirty"))
+                    TrySetField(viewContent, "isDirty", true, log, "view.isDirty");
+                // SharpDevelop AbstractViewContent has OnIsDirtyChanged() which fires
+                // IsDirtyChanged so the workbench's Save menu updates.
+                TryInvokeNoArgs(viewContent, "OnIsDirtyChanged", true, log, "view.OnIsDirtyChanged");
+            }
+
+            if (log.Count > 0)
+            {
+                result.Messages.Add("Mark-dirty paths tried: " + string.Join(", ", log.ToArray()));
+            }
+        }
+
+        static bool TrySetBool(object target, string propName, bool value, List<string> log, string tag)
+        {
+            if (target == null) return false;
+            var p = target.GetType().GetProperty(propName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (p == null || !p.CanWrite || p.PropertyType != typeof(bool)) return false;
+            try { p.SetValue(target, value, null); log.Add(tag + "=OK"); return true; }
+            catch (Exception ex) { log.Add(tag + "=ERR(" + ex.GetType().Name + ")"); return false; }
+        }
+
+        static bool TrySetField(object target, string fieldName, bool value, List<string> log, string tag)
+        {
+            if (target == null) return false;
+            var f = target.GetType().GetField(fieldName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (f == null || f.FieldType != typeof(bool)) return false;
+            try { f.SetValue(target, value); log.Add(tag + "=OK"); return true; }
+            catch (Exception ex) { log.Add(tag + "=ERR(" + ex.GetType().Name + ")"); return false; }
+        }
+
+        static void TryInvokeNoArgs(object target, string methodName, bool includeNonPublic,
+                                    List<string> log, string tag)
+        {
+            if (target == null) return;
+            var flags = BindingFlags.Public | BindingFlags.Instance;
+            if (includeNonPublic) flags |= BindingFlags.NonPublic;
+            var m = target.GetType().GetMethod(methodName, flags, null, Type.EmptyTypes, null);
+            if (m == null) { log.Add(tag + "=missing"); return; }
+            try { m.Invoke(target, null); log.Add(tag + "=OK"); }
+            catch (Exception ex) { log.Add(tag + "=ERR(" + (ex.InnerException ?? ex).GetType().Name + ")"); }
         }
 
         static void CopyAndAdd(object sourceField, object targetTable)

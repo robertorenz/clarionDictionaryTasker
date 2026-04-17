@@ -11,6 +11,18 @@ namespace ClarionDctAddin
     // portable across Clarion 12.x builds that may rev the internal types.
     internal static class DictModel
     {
+        public static object GetActiveDictionaryView()
+        {
+            try
+            {
+                var active = WorkbenchSingleton.Workbench.ActiveContent;
+                if (active == null) return null;
+                if (active.GetType().FullName != "SoftVelocity.DataDictionary.Editor.DataDictionaryViewContent") return null;
+                return active;
+            }
+            catch { return null; }
+        }
+
         public static bool TryGetOpenDictionary(out object dict, out string error)
         {
             dict = null;
