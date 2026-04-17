@@ -1,0 +1,33 @@
+<AddIn name        = "Clarion DCT Addin"
+       author      = "Roberto Renz"
+       copyright   = "(c) 2026 Reddin Assessments"
+       description = "Browse tables in the open dictionary and export their structure to JSON."
+       version     = "0.1.0">
+
+	<Manifest>
+		<Identity name = "ClarionDctAddin" version = "0.1.0"/>
+	</Manifest>
+
+	<Runtime>
+		<Import assembly = "ClarionDctAddin.dll"/>
+	</Runtime>
+
+	<Path name = "/SharpDevelop/Workbench/MainMenu">
+		<MenuItem id    = "DictTools"
+		          label = "Dict Tools"
+		          type  = "Menu"
+		          insertafter = "View">
+			<MenuItem id    = "DictToolsBrowse"
+			          label = "Browse tables..."
+			          class = "ClarionDctAddin.BrowseTablesCommand"/>
+			<MenuItem id    = "DictToolsSep1" type = "Separator"/>
+			<MenuItem id    = "DictToolsHello"
+			          label = "Hello (addin loaded)"
+			          class = "ClarionDctAddin.HelloCommand"/>
+			<MenuItem id    = "DictToolsReflect"
+			          label = "Reflection dump (debug)..."
+			          class = "ClarionDctAddin.ListTablesCommand"/>
+		</MenuItem>
+	</Path>
+
+</AddIn>

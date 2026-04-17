@@ -1,0 +1,83 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
+using ICSharpCode.SharpDevelop.Gui;
+
+namespace ClarionDctAddin
+{
+    // Reflection-based accessor for the running Clarion DataDictionary model.
+    // No compile-time reference to SoftVelocity assemblies so the add-in stays
+    // portable across Clarion 12.x builds that may rev the internal types.
+    internal static class DictModel
+    {
+        public static bool TryGetOpenDictionary(out object dict, out string error)
+        {
+            dict = null;
+            error = null;
+            try
+            {
+                var active = WorkbenchSingleton.Workbench.ActiveContent;
+                if (active == null)
+                {
+                    error = "No active window. Open a dictionary first.";
+                    return false;
+                }
+                if (active.GetType().FullName != "SoftVelocity.DataDictionary.Editor.DataDictionaryViewContent")
+                {
+                    error = "The active window is not a dictionary.\r\nSwitch to an open .DCT tab and try again.";
+                    return false;
+                }
+
+                var control = GetProp(active, "Control");
+                if (control == null) { error = "Dictionary view has no Control."; return false; }
+                dict = GetProp(control, "DCT");
+                if (dict == null) { error = "Dictionary model not available."; return false; }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "Failed to access dictionary: " + ex.Message;
+                return false;
+            }
+        }
+
+        public static IList<object> GetTables(object dict)
+        {
+            var coll = GetProp(dict, "Tables") as IEnumerable;
+            var list = new List<object>();
+            if (coll != null) foreach (var o in coll) if (o != null) list.Add(o);
+            return list;
+        }
+
+        public static string GetDictionaryName(object dict)
+        {
+            return AsString(GetProp(dict, "Name")) ?? AsString(GetProp(dict, "UniqueName")) ?? "dictionary";
+        }
+
+        public static string GetDictionaryFileName(object dict)
+        {
+            return AsString(GetProp(dict, "FileName")) ?? "";
+        }
+
+        // --- tiny reflection helpers used elsewhere too ---
+        public static object GetProp(object o, string name)
+        {
+            if (o == null) return null;
+            var p = o.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (p == null || !p.CanRead || p.GetIndexParameters().Length > 0) return null;
+            try { return p.GetValue(o, null); } catch { return null; }
+        }
+
+        public static string AsString(object v) { return v == null ? null : v.ToString(); }
+
+        public static int CountEnumerable(object o, string prop)
+        {
+            var v = GetProp(o, prop) as IEnumerable;
+            if (v == null) return 0;
+            int n = 0;
+            foreach (var _ in v) n++;
+            return n;
+        }
+    }
+}
