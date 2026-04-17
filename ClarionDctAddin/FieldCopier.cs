@@ -366,28 +366,31 @@ namespace ClarionDctAddin
             if (TrySetBoolProp(newField, "Touched", true)) steps.Add("Touched<-prop");
             else if (TryInvokeSetter(newField, "set_Touched", true)) steps.Add("Touched<-setter");
 
-            // 9. Diagnostics — one-time dumps of structures likely involved in persistence.
+            // 9. Diagnostics — one-time dumps. Wrapped so a diagnostic NRE never
+            //    turns a successful copy into a counted failure.
             if (!CollectionInternalsDumped)
             {
                 CollectionInternalsDumped = true;
+                try
+                {
+                    DumpNonPublicState(newField, result.Messages, "NewField.");
+                    if (targetFieldsCollection != null)
+                        DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-coll.");
+                    DumpNonPublicState(targetTable, result.Messages, "DDFile.");
 
-                // The newly-copied field — shows what Copy() actually initialised.
-                DumpNonPublicState(newField, result.Messages, "NewField.");
+                    var fc = DictModel.GetProp(targetTable, "FC");
+                    result.Messages.Add("FC public: " + (fc == null ? "NULL" : fc.GetType().FullName));
+                    if (fc != null) DumpNonPublicState(fc, result.Messages, "FC.");
 
-                if (targetFieldsCollection != null)
-                    DumpNonPublicState(targetFieldsCollection, result.Messages, "Fields-coll.");
-                DumpNonPublicState(targetTable, result.Messages, "DDFile.");
-
-                // FC via public property.
-                var fc = DictModel.GetProp(targetTable, "FC");
-                result.Messages.Add("FC public: " + (fc == null ? "NULL" : fc.GetType().FullName));
-                if (fc != null) DumpNonPublicState(fc, result.Messages, "FC.");
-
-                // FieldContainer via the non-public 'fields' backing on DDBaseFile.
-                var fcField = GetNonPublicMember(targetTable, "fields");
-                result.Messages.Add("fields (nonpub): " + (fcField == null ? "NULL" : fcField.GetType().FullName));
-                if (fcField != null && !ReferenceEquals(fc, fcField))
-                    DumpNonPublicState(fcField, result.Messages, "fields-np.");
+                    var fcField = GetNonPublicMember(targetTable, "fields");
+                    result.Messages.Add("fields (nonpub): " + (fcField == null ? "NULL" : fcField.GetType().FullName));
+                    if (fcField != null && !ReferenceEquals(fc, fcField))
+                        DumpNonPublicState(fcField, result.Messages, "fields-np.");
+                }
+                catch (Exception ex)
+                {
+                    result.Messages.Add("Diag dump aborted: " + ex.GetType().Name + " - " + ex.Message);
+                }
             }
 
             // 8. Per-field state — extra properties that save may consult.
@@ -438,7 +441,7 @@ namespace ClarionDctAddin
                         int c = 0; try { foreach (var _ in (IEnumerable)v) c++; } catch { }
                         vs = "IEnumerable[" + c + "]  (" + v.GetType().Name + ")";
                     }
-                    else vs = v.ToString();
+                    else { try { vs = v.ToString(); } catch (Exception tex) { vs = "<toStr:" + tex.GetType().Name + ">"; } }
                     if (vs.Length > 90) vs = vs.Substring(0, 90) + "...";
                     msgs.Add(prefix + t.Name + "." + f.Name + " : " + FormatType(f.FieldType) + " = " + vs);
                 }
