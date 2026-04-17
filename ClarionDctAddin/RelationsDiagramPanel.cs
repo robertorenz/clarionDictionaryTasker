@@ -49,6 +49,9 @@ namespace ClarionDctAddin
         TableNode draggedNode;
         Point     dragOffset;
 
+        bool      relatedOnly;
+        CheckBox  chkRelatedOnly;
+
         public RelationsDiagramPanel(object dict)
         {
             this.dict = dict;
@@ -100,12 +103,27 @@ namespace ClarionDctAddin
             var btnFit = MakeToolbarButton("Fit", 575, 50);
             btnFit.Click += delegate { FitToView(); };
 
+            chkRelatedOnly = new CheckBox
+            {
+                Text = "Related only",
+                Appearance = Appearance.Button,
+                Left = 635, Top = 5, Width = 110, Height = 28,
+                TextAlign = ContentAlignment.MiddleCenter,
+                FlatStyle = FlatStyle.System,
+                Font = new Font("Segoe UI", 9F)
+            };
+            chkRelatedOnly.CheckedChanged += delegate
+            {
+                relatedOnly = chkRelatedOnly.Checked;
+                DoLayout((LayoutMode)cboLayout.SelectedIndex);
+            };
+
             var rightSide = new Panel { Dock = DockStyle.Right, Width = 220, BackColor = ToolbarBg };
             var btnInspect = MakeToolbarButton("Inspect first relation...", 10, 200);
             btnInspect.Click += delegate { InspectFirstRelation(); };
             rightSide.Controls.Add(btnInspect);
 
-            toolbar.Controls.AddRange(new Control[] { lblLayout, cboLayout, btnRelayout, btnZoomOut, lblZoom, btnZoomIn, btn100, btnFit, rightSide });
+            toolbar.Controls.AddRange(new Control[] { lblLayout, cboLayout, btnRelayout, btnZoomOut, lblZoom, btnZoomIn, btn100, btnFit, chkRelatedOnly, rightSide });
 
             var scrollHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = CanvasBg };
 
@@ -215,17 +233,35 @@ namespace ClarionDctAddin
         }
 
         // --- layout ---
+        bool IsConnected(TableNode n)
+        {
+            return edges.Any(e => e.From == n || e.To == n);
+        }
+
         void DoLayout(LayoutMode mode)
         {
             if (nodes.Count == 0) return;
+
+            // Recompute visibility based on the current filter.
+            foreach (var n in nodes) n.Visible = !relatedOnly || IsConnected(n);
+
+            var visible = nodes.Where(n => n.Visible).ToList();
+            if (visible.Count == 0)
+            {
+                contentSize = new Size(100, 100);
+                canvas.Size = new Size(10, 10);
+                canvas.Invalidate();
+                return;
+            }
+
             switch (mode)
             {
-                case LayoutMode.Layered:       LayoutLayered();     break;
-                case LayoutMode.Alphabetical:  LayoutGrid(nodes.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase)); break;
-                case LayoutMode.ByFieldCount:  LayoutGrid(nodes.OrderByDescending(n => n.FieldCount).ThenBy(n => n.Name)); break;
-                case LayoutMode.ByConnections: LayoutGrid(nodes.OrderByDescending(CountConnections).ThenBy(n => n.Name)); break;
-                case LayoutMode.ByDriver:      LayoutGroupedGrid(nodes.OrderBy(n => n.Driver).ThenBy(n => n.Name)); break;
-                case LayoutMode.Circle:        LayoutCircle();      break;
+                case LayoutMode.Layered:       LayoutLayered(visible);     break;
+                case LayoutMode.Alphabetical:  LayoutGrid(visible.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase)); break;
+                case LayoutMode.ByFieldCount:  LayoutGrid(visible.OrderByDescending(n => n.FieldCount).ThenBy(n => n.Name)); break;
+                case LayoutMode.ByConnections: LayoutGrid(visible.OrderByDescending(CountConnections).ThenBy(n => n.Name)); break;
+                case LayoutMode.ByDriver:      LayoutGroupedGrid(visible.OrderBy(n => n.Driver).ThenBy(n => n.Name)); break;
+                case LayoutMode.Circle:        LayoutCircle(visible);      break;
             }
             UpdateCanvasSize();
             canvas.Invalidate();
@@ -236,21 +272,23 @@ namespace ClarionDctAddin
             return edges.Count(e => e.From == n || e.To == n);
         }
 
-        void LayoutLayered()
+        void LayoutLayered(IList<TableNode> visible)
         {
-            var incoming = nodes.ToDictionary(n => n, n => 0);
-            foreach (var e in edges) if (incoming.ContainsKey(e.To)) incoming[e.To]++;
+            var visibleSet = new HashSet<TableNode>(visible);
+            var incoming = visible.ToDictionary(n => n, n => 0);
+            foreach (var e in edges)
+                if (visibleSet.Contains(e.From) && visibleSet.Contains(e.To)) incoming[e.To]++;
 
             var layer = new Dictionary<TableNode, int>();
             var q = new Queue<TableNode>();
-            foreach (var n in nodes.Where(x => incoming[x] == 0)) { layer[n] = 0; q.Enqueue(n); }
-            if (q.Count == 0 && nodes.Count > 0) { layer[nodes[0]] = 0; q.Enqueue(nodes[0]); }
+            foreach (var n in visible.Where(x => incoming[x] == 0)) { layer[n] = 0; q.Enqueue(n); }
+            if (q.Count == 0 && visible.Count > 0) { layer[visible[0]] = 0; q.Enqueue(visible[0]); }
 
             while (q.Count > 0)
             {
                 var u = q.Dequeue();
                 int lv = layer[u];
-                foreach (var e in edges.Where(x => x.From == u))
+                foreach (var e in edges.Where(x => x.From == u && visibleSet.Contains(x.To)))
                 {
                     int proposed = lv + 1;
                     int existing;
@@ -261,9 +299,11 @@ namespace ClarionDctAddin
                     }
                 }
             }
-            foreach (var n in nodes) if (!layer.ContainsKey(n)) layer[n] = 0;
+            foreach (var n in visible) if (!layer.ContainsKey(n)) layer[n] = 0;
 
-            var isolated = nodes.Where(n => !edges.Any(e => e.From == n || e.To == n)).ToList();
+            var isolated = visible.Where(n => !edges.Any(e =>
+                (e.From == n && visibleSet.Contains(e.To)) ||
+                (e.To == n   && visibleSet.Contains(e.From)))).ToList();
             int maxLayer = layer.Values.DefaultIfEmpty(0).Max();
             if (isolated.Count > 0)
             {
@@ -272,7 +312,7 @@ namespace ClarionDctAddin
             }
 
             int colIndex = 0;
-            foreach (var grp in nodes.GroupBy(n => layer[n]).OrderBy(g => g.Key))
+            foreach (var grp in visible.GroupBy(n => layer[n]).OrderBy(g => g.Key))
             {
                 int x = CanvasMargin + colIndex * ColSpacing;
                 int y = CanvasMargin;
@@ -317,14 +357,15 @@ namespace ClarionDctAddin
             }
         }
 
-        void LayoutCircle()
+        void LayoutCircle(IList<TableNode> visible)
         {
-            int count = nodes.Count;
+            int count = visible.Count;
+            if (count == 0) return;
             double radius = Math.Max(180, count * 26);
             double centerX = CanvasMargin + radius + NodeWidth / 2.0;
             double centerY = CanvasMargin + radius + NodeHeight / 2.0;
             int i = 0;
-            foreach (var n in nodes.OrderBy(nn => nn.Name, StringComparer.OrdinalIgnoreCase))
+            foreach (var n in visible.OrderBy(nn => nn.Name, StringComparer.OrdinalIgnoreCase))
             {
                 double angle = 2 * Math.PI * i / count - Math.PI / 2;
                 int x = (int)(centerX + Math.Cos(angle) * radius - NodeWidth / 2.0);
@@ -339,6 +380,7 @@ namespace ClarionDctAddin
             int maxR = 0, maxB = 0;
             foreach (var n in nodes)
             {
+                if (!n.Visible) continue;
                 if (n.Bounds.Right  > maxR) maxR = n.Bounds.Right;
                 if (n.Bounds.Bottom > maxB) maxB = n.Bounds.Bottom;
             }
@@ -415,6 +457,7 @@ namespace ClarionDctAddin
             // Topmost hit wins — iterate back to front.
             for (int i = nodes.Count - 1; i >= 0; i--)
             {
+                if (!nodes[i].Visible) continue;
                 if (nodes[i].Bounds.Contains(p))
                 {
                     draggedNode = nodes[i];
@@ -443,7 +486,7 @@ namespace ClarionDctAddin
                 return;
             }
             var lp = ScreenToLogical(e.Location);
-            bool over = nodes.Any(n => n.Bounds.Contains(lp));
+            bool over = nodes.Any(n => n.Visible && n.Bounds.Contains(lp));
             canvas.Cursor = over ? Cursors.SizeAll : Cursors.Default;
         }
 
@@ -473,6 +516,7 @@ namespace ClarionDctAddin
                 edgePen.CustomEndCap = new AdjustableArrowCap(5, 6, true);
                 foreach (var edge in edges)
                 {
+                    if (!edge.From.Visible || !edge.To.Visible) continue;
                     Point p1, p2;
                     ComputeEdgePoints(edge.From.Bounds, edge.To.Bounds, out p1, out p2);
                     g.DrawLine(edgePen, p1, p2);
@@ -501,6 +545,7 @@ namespace ClarionDctAddin
                 var fmt = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
                 foreach (var n in nodes)
                 {
+                    if (!n.Visible) continue;
                     var r = n.Bounds;
                     bool isDragged = n == draggedNode;
                     using (var path = RoundedRect(r, 6))
@@ -627,6 +672,7 @@ namespace ClarionDctAddin
             public readonly int    FieldCount;
             public readonly string Driver;
             public Rectangle Bounds;
+            public bool Visible = true;
             public TableNode(string name, int fc, string drv) { Name = name; FieldCount = fc; Driver = drv; }
         }
 
