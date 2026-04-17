@@ -20,6 +20,9 @@
 			<MenuItem id    = "DictToolsBrowse"
 			          label = "Browse tables..."
 			          class = "ClarionDctAddin.BrowseTablesCommand"/>
+			<MenuItem id    = "DictToolsBatchCopy"
+			          label = "Batch copy fields..."
+			          class = "ClarionDctAddin.BatchCopyFieldsCommand"/>
 			<MenuItem id    = "DictToolsSep1" type = "Separator"/>
 			<MenuItem id    = "DictToolsHello"
 			          label = "Hello (addin loaded)"
@@ -27,6 +30,9 @@
 			<MenuItem id    = "DictToolsReflect"
 			          label = "Reflection dump (debug)..."
 			          class = "ClarionDctAddin.ListTablesCommand"/>
+			<MenuItem id    = "DictToolsWriteApi"
+			          label = "Discover write API (debug)..."
+			          class = "ClarionDctAddin.DiscoverWriteApiCommand"/>
 		</MenuItem>
 	</Path>
 
