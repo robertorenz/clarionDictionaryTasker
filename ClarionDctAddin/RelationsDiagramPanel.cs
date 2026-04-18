@@ -32,7 +32,14 @@ namespace ClarionDctAddin
         const float MinZoom = 0.25f;
         const float MaxZoom = 3.0f;
 
-        enum LayoutMode { Layered, Alphabetical, ByFieldCount, ByConnections, ByDriver, Circle, ForceDirected, HubSpoke, Clusters, Tree }
+        enum LayoutMode
+        {
+            Layered, Alphabetical, ByFieldCount, ByConnections, ByDriver, Circle,
+            ForceDirected, HubSpoke, Clusters, Tree,
+            RadialTree, Bipartite, Matrix, Sugiyama, Orthogonal, Arc, Chord
+        }
+
+        enum EdgeStyle { Default, Orthogonal, Arc, Chord }
 
         readonly object dict;
         readonly List<TableNode> nodes = new List<TableNode>();
@@ -51,6 +58,13 @@ namespace ClarionDctAddin
 
         bool      relatedOnly;
         CheckBox  chkRelatedOnly;
+
+        EdgeStyle       currentEdgeStyle = EdgeStyle.Default;
+        bool            matrixMode;
+        List<TableNode> matrixNodes;
+        const int       MatrixCellSize   = 18;
+        const int       MatrixLabelWidth = 160;
+        const int       MatrixLabelHeight = 140;
 
         public RelationsDiagramPanel(object dict)
         {
@@ -85,7 +99,14 @@ namespace ClarionDctAddin
                 "Force-directed (spring)",
                 "Hub and spoke",
                 "Clusters (islands)",
-                "Tree"
+                "Tree",
+                "Radial tree",
+                "Bipartite (parent | both | child)",
+                "Matrix view",
+                "Sugiyama (min crossings)",
+                "Orthogonal",
+                "Arc diagram",
+                "Chord diagram"
             });
             cboLayout.SelectedIndex = 0;
             cboLayout.SelectedIndexChanged += delegate { DoLayout((LayoutMode)cboLayout.SelectedIndex); };
@@ -246,6 +267,11 @@ namespace ClarionDctAddin
         {
             if (nodes.Count == 0) return;
 
+            // Reset mode-specific state — each layout opts into what it needs.
+            matrixMode       = false;
+            matrixNodes      = null;
+            currentEdgeStyle = EdgeStyle.Default;
+
             // Recompute visibility based on the current filter.
             foreach (var n in nodes) n.Visible = !relatedOnly || IsConnected(n);
 
@@ -270,6 +296,13 @@ namespace ClarionDctAddin
                 case LayoutMode.HubSpoke:      LayoutHubSpoke(visible);    break;
                 case LayoutMode.Clusters:      LayoutClusters(visible);    break;
                 case LayoutMode.Tree:          LayoutTree(visible);        break;
+                case LayoutMode.RadialTree:    LayoutRadialTree(visible);  break;
+                case LayoutMode.Bipartite:     LayoutBipartite(visible);   break;
+                case LayoutMode.Matrix:        LayoutMatrix(visible);      break;
+                case LayoutMode.Sugiyama:      LayoutSugiyama(visible);    break;
+                case LayoutMode.Orthogonal:    LayoutGrid(visible.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase)); currentEdgeStyle = EdgeStyle.Orthogonal; break;
+                case LayoutMode.Arc:           LayoutArcDiagram(visible);  break;
+                case LayoutMode.Chord:         LayoutCircle(visible); currentEdgeStyle = EdgeStyle.Chord; break;
             }
             UpdateCanvasSize();
             canvas.Invalidate();
@@ -545,6 +578,295 @@ namespace ClarionDctAddin
             }
         }
 
+        // --- Radial tree: concentric arcs, subtree slices by leaf count -----
+        void LayoutRadialTree(IList<TableNode> visible)
+        {
+            var set = new HashSet<TableNode>(visible);
+            var kids = new Dictionary<TableNode, List<TableNode>>();
+            var indeg = new Dictionary<TableNode, int>();
+            foreach (var n in visible) { kids[n] = new List<TableNode>(); indeg[n] = 0; }
+            foreach (var e in edges)
+            {
+                if (!set.Contains(e.From) || !set.Contains(e.To)) continue;
+                kids[e.From].Add(e.To);
+                indeg[e.To]++;
+            }
+            var roots = visible.Where(n => indeg[n] == 0)
+                               .OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
+                               .ToList();
+            if (roots.Count == 0 && visible.Count > 0) roots.Add(visible[0]);
+
+            var leafCount = new Dictionary<TableNode, int>();
+            var placed = new HashSet<TableNode>();
+            ComputeLeafCount(roots, kids, leafCount, new HashSet<TableNode>());
+
+            double cx = 800, cy = 600;
+            const double radiusStep = 180;
+
+            if (roots.Count == 1)
+            {
+                var r = roots[0];
+                placed.Add(r);
+                r.Bounds = new Rectangle((int)(cx - NodeWidth / 2.0), (int)(cy - NodeHeight / 2.0), NodeWidth, NodeHeight);
+                PlaceRadialChildren(r, kids, leafCount, placed, cx, cy,
+                    -Math.PI / 2, 2 * Math.PI, 1, radiusStep);
+            }
+            else
+            {
+                int totalLeaves = 0;
+                foreach (var r in roots) totalLeaves += Lookup(leafCount, r, 1);
+                double cur = -Math.PI / 2;
+                foreach (var root in roots)
+                {
+                    double slice = 2 * Math.PI * Lookup(leafCount, root, 1) / (double)Math.Max(1, totalLeaves);
+                    PlaceRadialAt(root, cx, cy, cur, cur + slice, 1, radiusStep, kids, leafCount, placed);
+                    cur += slice;
+                }
+            }
+
+            // Any orphans stranded by cycles — tuck below.
+            var orphans = visible.Where(n => !placed.Contains(n)).ToList();
+            if (orphans.Count > 0)
+            {
+                int y = placed.Count > 0 ? placed.Max(p => p.Bounds.Bottom) + 30 : CanvasMargin;
+                int xx = CanvasMargin;
+                foreach (var o in orphans)
+                {
+                    o.Bounds = new Rectangle(xx, y, NodeWidth, NodeHeight);
+                    placed.Add(o);
+                    xx += NodeWidth + 24;
+                }
+            }
+
+            ShiftToPositive(placed);
+        }
+
+        void PlaceRadialAt(TableNode node, double cx, double cy,
+            double sliceStart, double sliceEnd, int depth, double radiusStep,
+            Dictionary<TableNode, List<TableNode>> kids,
+            Dictionary<TableNode, int> leafCount,
+            HashSet<TableNode> placed)
+        {
+            if (!placed.Add(node)) return;
+
+            double angle = (sliceStart + sliceEnd) / 2;
+            double radius = depth * radiusStep;
+            double nx = cx + Math.Cos(angle) * radius - NodeWidth / 2.0;
+            double ny = cy + Math.Sin(angle) * radius - NodeHeight / 2.0;
+            node.Bounds = new Rectangle((int)nx, (int)ny, NodeWidth, NodeHeight);
+
+            PlaceRadialChildren(node, kids, leafCount, placed, cx, cy, sliceStart, sliceEnd - sliceStart, depth + 1, radiusStep);
+        }
+
+        void PlaceRadialChildren(TableNode parent,
+            Dictionary<TableNode, List<TableNode>> kids,
+            Dictionary<TableNode, int> leafCount,
+            HashSet<TableNode> placed,
+            double cx, double cy,
+            double sliceStart, double sliceExtent,
+            int depth, double radiusStep)
+        {
+            var ch = kids[parent].Where(k => !placed.Contains(k)).ToList();
+            if (ch.Count == 0) return;
+            int total = 0;
+            foreach (var k in ch) total += Lookup(leafCount, k, 1);
+            double cur = sliceStart;
+            foreach (var k in ch)
+            {
+                double slice = sliceExtent * Lookup(leafCount, k, 1) / (double)Math.Max(1, total);
+                PlaceRadialAt(k, cx, cy, cur, cur + slice, depth, radiusStep, kids, leafCount, placed);
+                cur += slice;
+            }
+        }
+
+        static int Lookup(Dictionary<TableNode, int> dict, TableNode key, int fallback)
+        {
+            int v; return dict.TryGetValue(key, out v) ? v : fallback;
+        }
+
+        static void ComputeLeafCount(List<TableNode> roots,
+            Dictionary<TableNode, List<TableNode>> kids,
+            Dictionary<TableNode, int> leafCount,
+            HashSet<TableNode> visiting)
+        {
+            foreach (var r in roots) ComputeLeafCountFor(r, kids, leafCount, visiting);
+        }
+
+        static int ComputeLeafCountFor(TableNode n,
+            Dictionary<TableNode, List<TableNode>> kids,
+            Dictionary<TableNode, int> leafCount,
+            HashSet<TableNode> visiting)
+        {
+            int existing;
+            if (leafCount.TryGetValue(n, out existing)) return existing;
+            if (!visiting.Add(n)) { leafCount[n] = 1; return 1; }
+            var ch = kids[n].Where(k => !leafCount.ContainsKey(k) || leafCount[k] > 0).ToList();
+            if (ch.Count == 0) { leafCount[n] = 1; visiting.Remove(n); return 1; }
+            int total = 0;
+            foreach (var k in ch) total += ComputeLeafCountFor(k, kids, leafCount, visiting);
+            leafCount[n] = Math.Max(1, total);
+            visiting.Remove(n);
+            return leafCount[n];
+        }
+
+        void ShiftToPositive(HashSet<TableNode> placed)
+        {
+            if (placed.Count == 0) return;
+            int minX = placed.Min(p => p.Bounds.X);
+            int minY = placed.Min(p => p.Bounds.Y);
+            int dx = CanvasMargin - minX;
+            int dy = CanvasMargin - minY;
+            if (dx == 0 && dy == 0) return;
+            foreach (var n in placed)
+                n.Bounds = new Rectangle(n.Bounds.X + dx, n.Bounds.Y + dy, NodeWidth, NodeHeight);
+        }
+
+        // --- Bipartite: parent-side | both | child-side ---------------------
+        void LayoutBipartite(IList<TableNode> visible)
+        {
+            var inDeg = new Dictionary<TableNode, int>();
+            var outDeg = new Dictionary<TableNode, int>();
+            foreach (var n in visible) { inDeg[n] = 0; outDeg[n] = 0; }
+            foreach (var e in edges)
+            {
+                if (outDeg.ContainsKey(e.From)) outDeg[e.From]++;
+                if (inDeg.ContainsKey(e.To))    inDeg[e.To]++;
+            }
+            var parents  = visible.Where(n => outDeg[n] > inDeg[n])
+                                  .OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            var children = visible.Where(n => inDeg[n] > outDeg[n])
+                                  .OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            var both     = visible.Where(n => inDeg[n] == outDeg[n])
+                                  .OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+            int col1X = CanvasMargin;
+            int col2X = col1X + NodeWidth + 100;
+            int col3X = col2X + NodeWidth + 100;
+            StackColumn(parents,  col1X);
+            StackColumn(both,     col2X);
+            StackColumn(children, col3X);
+        }
+
+        void StackColumn(IList<TableNode> list, int x)
+        {
+            int y = CanvasMargin;
+            foreach (var n in list)
+            {
+                n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                y += NodeHeight + 20;
+            }
+        }
+
+        // --- Matrix view: adjacency heatmap (not spatial) -------------------
+        void LayoutMatrix(IList<TableNode> visible)
+        {
+            matrixMode = true;
+            matrixNodes = visible.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var n in visible) n.Bounds = Rectangle.Empty;
+        }
+
+        // --- Sugiyama: Layered + barycentre-based crossing reduction --------
+        void LayoutSugiyama(IList<TableNode> visible)
+        {
+            var set = new HashSet<TableNode>(visible);
+            var indeg = visible.ToDictionary(n => n, n => 0);
+            foreach (var e in edges)
+                if (set.Contains(e.From) && set.Contains(e.To)) indeg[e.To]++;
+
+            var layer = new Dictionary<TableNode, int>();
+            var q = new Queue<TableNode>();
+            foreach (var n in visible.Where(x => indeg[x] == 0)) { layer[n] = 0; q.Enqueue(n); }
+            if (q.Count == 0 && visible.Count > 0) { layer[visible[0]] = 0; q.Enqueue(visible[0]); }
+            while (q.Count > 0)
+            {
+                var u = q.Dequeue();
+                int lv = layer[u];
+                foreach (var e in edges.Where(x => x.From == u && set.Contains(x.To)))
+                {
+                    int proposed = lv + 1;
+                    int existing;
+                    if (!layer.TryGetValue(e.To, out existing) || existing < proposed)
+                    {
+                        layer[e.To] = proposed;
+                        q.Enqueue(e.To);
+                    }
+                }
+            }
+            foreach (var n in visible) if (!layer.ContainsKey(n)) layer[n] = 0;
+
+            var layers = visible.GroupBy(n => layer[n]).OrderBy(g => g.Key)
+                .Select(g => g.OrderBy(nn => nn.Name, StringComparer.OrdinalIgnoreCase).ToList())
+                .ToList();
+
+            // Barycentre iterations — alternate top-down and bottom-up.
+            var position = new Dictionary<TableNode, int>();
+            Action refresh = delegate
+            {
+                for (int li = 0; li < layers.Count; li++)
+                    for (int i = 0; i < layers[li].Count; i++)
+                        position[layers[li][i]] = i;
+            };
+            refresh();
+
+            for (int iter = 0; iter < 8; iter++)
+            {
+                for (int li = 1; li < layers.Count; li++)
+                {
+                    var cur = layers[li];
+                    var prev = layers[li - 1];
+                    cur.Sort((a, b) => Barycentre(a, prev, true,  position).CompareTo(Barycentre(b, prev, true,  position)));
+                }
+                refresh();
+                for (int li = layers.Count - 2; li >= 0; li--)
+                {
+                    var cur = layers[li];
+                    var next = layers[li + 1];
+                    cur.Sort((a, b) => Barycentre(a, next, false, position).CompareTo(Barycentre(b, next, false, position)));
+                }
+                refresh();
+            }
+
+            int colIdx = 0;
+            foreach (var lyr in layers)
+            {
+                int x = CanvasMargin + colIdx * ColSpacing;
+                int y = CanvasMargin;
+                foreach (var n in lyr)
+                {
+                    n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                    y += RowSpacing;
+                }
+                colIdx++;
+            }
+        }
+
+        double Barycentre(TableNode n, IList<TableNode> otherLayer, bool incoming,
+            Dictionary<TableNode, int> position)
+        {
+            var positions = new List<int>();
+            foreach (var e in edges)
+            {
+                if (incoming && e.To == n && otherLayer.Contains(e.From))
+                    positions.Add(position[e.From]);
+                else if (!incoming && e.From == n && otherLayer.Contains(e.To))
+                    positions.Add(position[e.To]);
+            }
+            return positions.Count == 0 ? double.MaxValue / 2 : positions.Average();
+        }
+
+        // --- Arc diagram: nodes on horizontal line, edges as arcs above -----
+        void LayoutArcDiagram(IList<TableNode> visible)
+        {
+            currentEdgeStyle = EdgeStyle.Arc;
+            int x = CanvasMargin;
+            int y = CanvasMargin + 260;
+            foreach (var n in visible.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                n.Bounds = new Rectangle(x, y, NodeWidth, NodeHeight);
+                x += NodeWidth + 30;
+            }
+        }
+
         int PlaceSubtree(TableNode n, int x, int depth,
             Dictionary<TableNode, List<TableNode>> childrenOf,
             HashSet<TableNode> placed,
@@ -685,6 +1007,18 @@ namespace ClarionDctAddin
 
         void UpdateCanvasSize()
         {
+            if (matrixMode && matrixNodes != null)
+            {
+                int n = matrixNodes.Count;
+                contentSize = new Size(
+                    MatrixLabelWidth + n * MatrixCellSize + CanvasMargin,
+                    MatrixLabelHeight + n * MatrixCellSize + CanvasMargin);
+                canvas.Size = new Size(
+                    Math.Max(10, (int)(contentSize.Width  * zoom)),
+                    Math.Max(10, (int)(contentSize.Height * zoom)));
+                return;
+            }
+
             int maxR = 0, maxB = 0;
             foreach (var n in nodes)
             {
@@ -760,6 +1094,7 @@ namespace ClarionDctAddin
 
         void OnCanvasMouseDown(object sender, MouseEventArgs e)
         {
+            if (matrixMode) return;
             if (e.Button != MouseButtons.Left) return;
             var p = ScreenToLogical(e.Location);
             // Topmost hit wins — iterate back to front.
@@ -782,6 +1117,7 @@ namespace ClarionDctAddin
 
         void OnCanvasMouseMove(object sender, MouseEventArgs e)
         {
+            if (matrixMode) { canvas.Cursor = Cursors.Default; return; }
             if (draggedNode != null)
             {
                 var p = ScreenToLogical(e.Location);
@@ -817,6 +1153,12 @@ namespace ClarionDctAddin
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             g.ScaleTransform(zoom, zoom);
 
+            if (matrixMode)
+            {
+                DrawMatrix(g);
+                return;
+            }
+
             using (var edgePen = new Pen(EdgeColor, 1.3f))
             using (var labelFont = new Font("Segoe UI", 7.5F))
             using (var labelBrush = new SolidBrush(EdgeLabel))
@@ -825,14 +1167,38 @@ namespace ClarionDctAddin
                 foreach (var edge in edges)
                 {
                     if (!edge.From.Visible || !edge.To.Visible) continue;
-                    Point p1, p2;
-                    ComputeEdgePoints(edge.From.Bounds, edge.To.Bounds, out p1, out p2);
-                    g.DrawLine(edgePen, p1, p2);
 
-                    if (!string.IsNullOrEmpty(edge.Name))
+                    Point p1, p2;
+                    switch (currentEdgeStyle)
                     {
-                        float mx = (p1.X + p2.X) / 2F;
-                        float my = (p1.Y + p2.Y) / 2F - 10;
+                        case EdgeStyle.Arc:
+                            DrawArcEdge(g, edgePen, edge, labelFont, labelBrush);
+                            continue;
+                        case EdgeStyle.Chord:
+                            p1 = new Point(edge.From.Bounds.X + edge.From.Bounds.Width / 2,
+                                           edge.From.Bounds.Y + edge.From.Bounds.Height / 2);
+                            p2 = new Point(edge.To.Bounds.X + edge.To.Bounds.Width / 2,
+                                           edge.To.Bounds.Y + edge.To.Bounds.Height / 2);
+                            g.DrawLine(edgePen, p1, p2);
+                            break;
+                        case EdgeStyle.Orthogonal:
+                            ComputeEdgePoints(edge.From.Bounds, edge.To.Bounds, out p1, out p2);
+                            var mid = new Point(p2.X, p1.Y);
+                            g.DrawLine(edgePen, p1, mid);
+                            g.DrawLine(edgePen, mid, p2);
+                            break;
+                        default:
+                            ComputeEdgePoints(edge.From.Bounds, edge.To.Bounds, out p1, out p2);
+                            g.DrawLine(edgePen, p1, p2);
+                            break;
+                    }
+
+                    if (!string.IsNullOrEmpty(edge.Name) && currentEdgeStyle != EdgeStyle.Arc)
+                    {
+                        // Default / Orthogonal / Chord label at geometric midpoint.
+                        Point a = edge.From.Bounds.Location, b = edge.To.Bounds.Location;
+                        float mx = (a.X + b.X + edge.From.Bounds.Width) / 2F;
+                        float my = (a.Y + b.Y + edge.From.Bounds.Height) / 2F - 10;
                         var sz = g.MeasureString(edge.Name, labelFont);
                         using (var bg = new SolidBrush(Color.FromArgb(230, Color.White)))
                             g.FillRectangle(bg, mx - sz.Width / 2f - 2, my - 1, sz.Width + 4, sz.Height + 2);
@@ -867,6 +1233,90 @@ namespace ClarionDctAddin
                     var subText = n.FieldCount + " fields";
                     if (!string.IsNullOrEmpty(n.Driver)) subText += "  ·  " + n.Driver;
                     g.DrawString(subText, subFont, subBrush, sub, fmt);
+                }
+            }
+        }
+
+        void DrawArcEdge(Graphics g, Pen pen, RelEdge edge, Font labelFont, Brush labelBrush)
+        {
+            var pA = new Point(edge.From.Bounds.X + edge.From.Bounds.Width / 2, edge.From.Bounds.Y);
+            var pB = new Point(edge.To.Bounds.X   + edge.To.Bounds.Width   / 2, edge.To.Bounds.Y);
+            float height = Math.Max(40, Math.Abs(pB.X - pA.X) * 0.55f);
+            var c1 = new PointF(pA.X, pA.Y - height);
+            var c2 = new PointF(pB.X, pB.Y - height);
+            g.DrawBezier(pen, pA, c1, c2, pB);
+
+            if (!string.IsNullOrEmpty(edge.Name))
+            {
+                float mx = (pA.X + pB.X) / 2F;
+                float my = Math.Min(pA.Y, pB.Y) - height * 0.75f;
+                var sz = g.MeasureString(edge.Name, labelFont);
+                using (var bg = new SolidBrush(Color.FromArgb(230, Color.White)))
+                    g.FillRectangle(bg, mx - sz.Width / 2f - 2, my - 1, sz.Width + 4, sz.Height + 2);
+                g.DrawString(edge.Name, labelFont, labelBrush, mx - sz.Width / 2f, my);
+            }
+        }
+
+        void DrawMatrix(Graphics g)
+        {
+            if (matrixNodes == null || matrixNodes.Count == 0) return;
+
+            int n = matrixNodes.Count;
+            int cs = MatrixCellSize;
+            int gridX = MatrixLabelWidth + CanvasMargin;
+            int gridY = MatrixLabelHeight + CanvasMargin;
+
+            var idx = new Dictionary<TableNode, int>();
+            for (int i = 0; i < n; i++) idx[matrixNodes[i]] = i;
+            var cells = new HashSet<long>();
+            foreach (var e in edges)
+            {
+                int a, b;
+                if (!idx.TryGetValue(e.From, out a)) continue;
+                if (!idx.TryGetValue(e.To,   out b)) continue;
+                cells.Add(((long)a << 32) | (uint)b);
+            }
+
+            using (var bg   = new SolidBrush(Color.FromArgb(248, 250, 253)))
+                g.FillRectangle(bg, gridX, gridY, n * cs, n * cs);
+
+            using (var fill = new SolidBrush(NodeBorder))
+            using (var diag = new SolidBrush(Color.FromArgb(225, 230, 235)))
+            using (var grid = new Pen(Color.FromArgb(218, 223, 228), 1f))
+            {
+                for (int r = 0; r < n; r++)
+                    for (int c = 0; c < n; c++)
+                    {
+                        var rect = new Rectangle(gridX + c * cs, gridY + r * cs, cs, cs);
+                        if (r == c)
+                            g.FillRectangle(diag, rect);
+                        else if (cells.Contains(((long)r << 32) | (uint)c))
+                            g.FillRectangle(fill,
+                                rect.X + 2, rect.Y + 2, rect.Width - 4, rect.Height - 4);
+                    }
+                for (int i = 0; i <= n; i++)
+                {
+                    g.DrawLine(grid, gridX + i * cs, gridY, gridX + i * cs, gridY + n * cs);
+                    g.DrawLine(grid, gridX, gridY + i * cs, gridX + n * cs, gridY + i * cs);
+                }
+            }
+
+            using (var font = new Font("Segoe UI", 8F))
+            using (var br   = new SolidBrush(NodeText))
+            {
+                var rightAlign = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap, Trimming = StringTrimming.EllipsisCharacter };
+                for (int i = 0; i < n; i++)
+                {
+                    var r = new RectangleF(CanvasMargin, gridY + i * cs, MatrixLabelWidth - 6, cs);
+                    g.DrawString(matrixNodes[i].Name, font, br, r, rightAlign);
+                }
+                for (int i = 0; i < n; i++)
+                {
+                    var state = g.Save();
+                    g.TranslateTransform(gridX + i * cs + cs / 2f, gridY - 4);
+                    g.RotateTransform(-50);
+                    g.DrawString(matrixNodes[i].Name, font, br, 0, -cs / 2f);
+                    g.Restore(state);
                 }
             }
         }
