@@ -105,9 +105,9 @@ namespace ClarionDctAddin
 
             chkRelatedOnly = new CheckBox
             {
-                Text = "Related only",
+                Text = "Only Tables with Relations",
                 Appearance = Appearance.Button,
-                Left = 635, Top = 5, Width = 110, Height = 28,
+                Left = 635, Top = 5, Width = 190, Height = 28,
                 TextAlign = ContentAlignment.MiddleCenter,
                 FlatStyle = FlatStyle.System,
                 Font = new Font("Segoe UI", 9F)
