@@ -13,6 +13,7 @@ namespace ClarionDctAddin
     {
         const string IconResourcePath        = "ClarionDctAddin.Resources.dictionarytasker.ico";
         const string BackgroundResourcePath  = "ClarionDctAddin.Resources.dictionarytaskerbig.png";
+        const string DocsResourcePath        = "ClarionDctAddin.docs.index.html";
         public const string ToolbarIconName  = "Icons.24x24.DictTasker";
 
         static Icon   cachedIcon;
@@ -41,6 +42,27 @@ namespace ClarionDctAddin
             }
             catch { }
             return cachedBackground;
+        }
+
+        // Extract the embedded HTML manual to %TEMP% once per process and
+        // return the path. Caller (Help button) hands the path to Process.Start
+        // which opens it in the default browser.
+        static string cachedDocsPath;
+        public static string ExtractDocsToTemp()
+        {
+            try
+            {
+                if (cachedDocsPath != null && File.Exists(cachedDocsPath)) return cachedDocsPath;
+                using (var s = Open(DocsResourcePath))
+                {
+                    if (s == null) return null;
+                    var target = Path.Combine(Path.GetTempPath(), "dictionary-tasker-manual.html");
+                    using (var fs = File.Create(target)) s.CopyTo(fs);
+                    cachedDocsPath = target;
+                    return target;
+                }
+            }
+            catch { return null; }
         }
 
         public static Bitmap Load24Toolbar()

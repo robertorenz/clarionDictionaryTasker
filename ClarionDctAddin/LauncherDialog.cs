@@ -66,7 +66,10 @@ namespace ClarionDctAddin
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = PanelColor, Padding = new Padding(16, 10, 16, 10) };
             var btnClose = new Button { Text = "Close", Width = 120, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
             btnClose.Click += delegate { Close(); };
+            var btnHelp = new Button { Text = "Help", Width = 120, Height = 32, Dock = DockStyle.Left, FlatStyle = FlatStyle.System };
+            btnHelp.Click += delegate { OpenHelp(); };
             bottom.Controls.Add(btnClose);
+            bottom.Controls.Add(btnHelp);
 
             // Left column: big branded image, aspect-preserved, inset slightly.
             var imagePanel = new Panel
@@ -137,6 +140,26 @@ namespace ClarionDctAddin
         void OpenBrowse()     { Hide(); using (var d = new TableListDialog(dict))      d.ShowDialog(this); Show(); }
         void OpenCopyFields() { Hide(); using (var d = new BatchCopyDialog(dict))      d.ShowDialog(this); Show(); }
         void OpenCopyKeys()   { Hide(); using (var d = new BatchCopyKeysDialog(dict))  d.ShowDialog(this); Show(); }
+
+        void OpenHelp()
+        {
+            try
+            {
+                var path = EmbeddedAssets.ExtractDocsToTemp();
+                if (string.IsNullOrEmpty(path))
+                {
+                    MessageBox.Show(this, "Help file is not bundled in this build.", "Dictionary Tasker",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                System.Diagnostics.Process.Start(path);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Could not open help: " + ex.Message, "Dictionary Tasker",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
     }
 
     internal class LauncherTile : Panel

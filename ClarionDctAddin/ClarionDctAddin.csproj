@@ -30,6 +30,7 @@
     </None>
     <EmbeddedResource Include="Resources\dictionarytasker.ico" />
     <EmbeddedResource Include="Resources\dictionarytaskerbig.png" />
+    <EmbeddedResource Include="..\docs\index.html" Link="docs\index.html" LogicalName="ClarionDctAddin.docs.index.html" />
   </ItemGroup>
 
 </Project>
