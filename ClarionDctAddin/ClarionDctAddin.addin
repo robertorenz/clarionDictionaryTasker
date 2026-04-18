@@ -54,8 +54,18 @@
 
 	<Path name = "/SharpDevelop/Workbench/ToolBar/Standard">
 		<ToolbarItem id = "DictTaskerSeparator" type = "Separator"/>
+		<!--
+		    Toolbar icon stays on a Clarion-shipped 24x24 for now.
+		    Our embedded custom ico ships inside the DLL but SharpDevelop
+		    resolves toolbar icons at IDE startup — before our /Workspace/Autostart
+		    command can inject the bitmap into ResourceService — so referencing
+		    "Icons.24x24.DictTasker" here kills the standard toolbar entirely.
+		    Re-enable once we can register the icon earlier in the SD lifecycle
+		    (or once the custom ico is shipped as a real embedded .resx that
+		    ResourceService discovers natively).
+		-->
 		<ToolbarItem id      = "DictTaskerLauncher"
-		             icon    = "Icons.24x24.DictTasker"
+		             icon    = "Icons.24x24.StartPage"
 		             tooltip = "Open Dictionary Tasker"
 		             class   = "ClarionDctAddin.LauncherCommand"/>
 	</Path>
