@@ -15,11 +15,56 @@ namespace ClarionDctAddin
         static readonly Color SubHeader   = Color.FromArgb(200, 213, 228);
 
         readonly object dict;
+        readonly Bitmap backgroundImage;
 
         public LauncherDialog(object dict)
         {
             this.dict = dict;
+            this.backgroundImage = EmbeddedAssets.LoadBackground();
             BuildUi();
+            var ico = EmbeddedAssets.LoadIcon();
+            if (ico != null)
+            {
+                Icon = ico;
+                ShowIcon = true;
+            }
+            DoubleBuffered = true;
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            var rect = ClientRectangle;
+
+            // Solid base so unpainted areas never flicker black.
+            using (var b = new SolidBrush(BgColor)) g.FillRectangle(b, rect);
+
+            if (backgroundImage != null)
+            {
+                // Cover the client area — paint the image letterboxed so it
+                // never distorts, centred, and then overlay a translucent
+                // wash so text and tiles stay comfortably readable.
+                float srcRatio = (float)backgroundImage.Width / backgroundImage.Height;
+                float dstRatio = (float)rect.Width / rect.Height;
+                RectangleF dst;
+                if (srcRatio > dstRatio)
+                {
+                    float h = rect.Width / srcRatio;
+                    dst = new RectangleF(0, (rect.Height - h) / 2f, rect.Width, h);
+                }
+                else
+                {
+                    float w = rect.Height * srcRatio;
+                    dst = new RectangleF((rect.Width - w) / 2f, 0, w, rect.Height);
+                }
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.DrawImage(backgroundImage, dst);
+
+                // Subtle wash so tiles + text stay readable while the image
+                // still comes through as branding. Lower alpha = more image.
+                using (var overlay = new SolidBrush(Color.FromArgb(195, BgColor)))
+                    g.FillRectangle(overlay, rect);
+            }
         }
 
         void BuildUi()
@@ -61,7 +106,7 @@ namespace ClarionDctAddin
             {
                 Dock = DockStyle.Fill,
                 Padding = new Padding(24, 20, 24, 8),
-                BackColor = BgColor,
+                BackColor = Color.Transparent,
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true

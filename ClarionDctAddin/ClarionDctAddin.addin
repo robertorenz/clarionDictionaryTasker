@@ -12,6 +12,11 @@
 		<Import assembly = "ClarionDctAddin.dll"/>
 	</Runtime>
 
+	<Path name = "/Workspace/Autostart">
+		<Class id    = "DictTaskerIconRegister"
+		       class = "ClarionDctAddin.StartupCommand"/>
+	</Path>
+
 	<Path name = "/SharpDevelop/Workbench/MainMenu">
 		<MenuItem id    = "DictTools"
 		          label = "Dict Tools"
@@ -50,7 +55,7 @@
 	<Path name = "/SharpDevelop/Workbench/ToolBar/Standard">
 		<ToolbarItem id = "DictTaskerSeparator" type = "Separator"/>
 		<ToolbarItem id      = "DictTaskerLauncher"
-		             icon    = "Icons.24x24.StartPage"
+		             icon    = "Icons.24x24.DictTasker"
 		             tooltip = "Open Dictionary Tasker"
 		             class   = "ClarionDctAddin.LauncherCommand"/>
 	</Path>

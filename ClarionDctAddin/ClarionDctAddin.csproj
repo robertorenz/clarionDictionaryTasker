@@ -28,6 +28,8 @@
     <None Update="ClarionDctAddin.addin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <EmbeddedResource Include="Resources\dictionarytasker.ico" />
+    <EmbeddedResource Include="Resources\dictionarytaskerbig.png" />
   </ItemGroup>
 
 </Project>
