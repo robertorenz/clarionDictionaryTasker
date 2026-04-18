@@ -47,13 +47,13 @@
 		</MenuItem>
 	</Path>
 
-<!--
-	Toolbar registration intentionally omitted.
-	A bad icon name on a ToolbarItem can take the entire Standard toolbar
-	down at IDE startup. Re-enable once the 24x24 icon name is confirmed
-	to exist in this Clarion build (tried Icons.24x24.BrowserWindow, did
-	not resolve — resulted in the standard toolbar disappearing).
-	-->
+	<Path name = "/SharpDevelop/Workbench/ToolBar/Standard">
+		<ToolbarItem id = "DictTaskerSeparator" type = "Separator"/>
+		<ToolbarItem id      = "DictTaskerLauncher"
+		             icon    = "Icons.24x24.OpenProjectIcon"
+		             tooltip = "Open Dictionary Tasker"
+		             class   = "ClarionDctAddin.LauncherCommand"/>
+	</Path>
 
 
 </AddIn>
