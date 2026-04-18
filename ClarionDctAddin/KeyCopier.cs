@@ -335,15 +335,29 @@ namespace ClarionDctAddin
 
             // 7. Rewrite ExternalName to <TargetTable>_<KeyLabel> so every copy
             //    gets a unique, target-appropriate external name instead of
-            //    inheriting the source's.
+            //    inheriting the source's. The property setter may write to a
+            //    different backing field than the getter reads, so we hit
+            //    both the property AND every string field we can find named
+            //    like "external*" with the new value, then read back.
             var targetName = DictModel.AsString(DictModel.GetProp(targetTable, "Name")) ?? "";
             var keyLabel   = DictModel.AsString(DictModel.GetProp(newKey,     "Label")) ?? "";
             if (!string.IsNullOrEmpty(targetName) && !string.IsNullOrEmpty(keyLabel))
             {
                 var ext = targetName + "_" + keyLabel;
-                bool ok = TrySetProp(newKey, "ExternalName", ext)
-                       || TrySetObjectField(newKey, "externalName", ext);
-                steps.Add(ok ? "ExtName<-" + ext : "ExtName:fail");
+                bool propSet    = TrySetProp(newKey, "ExternalName", ext);
+                bool fldLower   = TrySetStringField(newKey, "externalName", ext);
+                bool fldPascal  = TrySetStringField(newKey, "ExternalName", ext);
+                bool fldAlt1    = TrySetStringField(newKey, "fileExternalName", ext);
+                bool fldAlt2    = TrySetStringField(newKey, "externalNameValue", ext);
+                bool fldAnyExt  = TrySetStringFieldsMatching(newKey, "external", ext);
+                var after       = DictModel.AsString(DictModel.GetProp(newKey, "ExternalName")) ?? "";
+                steps.Add("ExtName[prop=" + propSet
+                    + ",f.externalName=" + fldLower
+                    + ",f.ExternalName=" + fldPascal
+                    + ",f.fileExternalName=" + fldAlt1
+                    + ",f.externalNameValue=" + fldAlt2
+                    + ",fAnyExt=" + fldAnyExt
+                    + "]=>'" + after + "'");
             }
 
             // 8. Final report.
@@ -617,7 +631,7 @@ namespace ClarionDctAddin
 
         static void DumpKeyShape(object key, List<string> msgs)
         {
-            msgs.Add("Key shape:");
+            msgs.Add("Key shape — IEnumerable properties:");
             foreach (var p in key.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
                                  .Where(pp => pp.CanRead && pp.GetIndexParameters().Length == 0 && pp.Name.IndexOf('.') < 0)
                                  .OrderBy(pp => pp.Name))
@@ -630,6 +644,63 @@ namespace ClarionDctAddin
                 int c = 0; try { foreach (var _ in (IEnumerable)v) c++; } catch { }
                 msgs.Add("  " + p.Name + " : " + vt.Name + " [" + c + "]");
             }
+
+            msgs.Add("Key shape — non-public string fields (name containing 'name' or 'ext'):");
+            var t = key.GetType();
+            while (t != null && t != typeof(object))
+            {
+                foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Public
+                                             | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (f.FieldType != typeof(string)) continue;
+                    var n = f.Name;
+                    if (n.IndexOf("name", StringComparison.OrdinalIgnoreCase) < 0 &&
+                        n.IndexOf("ext",  StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    string cur; try { cur = (string)f.GetValue(key); } catch { cur = "<ex>"; }
+                    msgs.Add("  " + t.Name + "." + n + " = \"" + (cur ?? "") + "\"");
+                }
+                t = t.BaseType;
+            }
+        }
+
+        static bool TrySetStringField(object target, string fieldName, string value)
+        {
+            if (target == null) return false;
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                var f = t.GetField(fieldName,
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                if (f != null && f.FieldType == typeof(string))
+                {
+                    try { f.SetValue(target, value); return true; } catch { return false; }
+                }
+                t = t.BaseType;
+            }
+            return false;
+        }
+
+        // Overwrite every string field on the class hierarchy whose name mentions the
+        // given substring (case-insensitive). Used to catch whatever the Clarion
+        // build calls the backing field for external name — externalName, ExternalName,
+        // fileExternalName, externalNameValue, …
+        static bool TrySetStringFieldsMatching(object target, string nameContains, string value)
+        {
+            if (target == null) return false;
+            bool any = false;
+            var t = target.GetType();
+            while (t != null && t != typeof(object))
+            {
+                foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic
+                                             | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (f.FieldType != typeof(string)) continue;
+                    if (f.Name.IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    try { f.SetValue(target, value); any = true; } catch { }
+                }
+                t = t.BaseType;
+            }
+            return any;
         }
 
         static void ForceMarkDirty(object dict, object viewContent, ApplyResult result)
