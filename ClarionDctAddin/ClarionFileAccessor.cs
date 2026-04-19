@@ -87,13 +87,29 @@ namespace ClarionDctAddin
                 r.ColumnTypes .Add(DictModel.AsString(DictModel.GetProp(f, "DataType")) ?? "");
             }
 
-            // 3. Load Clarion's runtime FileIO assembly + LINQToFileProvider.
+            // 3. Load Clarion's runtime FileIO assembly + the Runtime.Classes
+            //    tree that carries the per-driver CFile subclasses.
             var fileIo = LoadClarionAssembly("SoftVelocity.Clarion.FileIO.dll", r);
             if (fileIo == null) { r.Ok = false; r.Error = "Could not load SoftVelocity.Clarion.FileIO.dll."; return; }
+            LoadClarionAssembly("SoftVelocity.Clarion.Runtime.Classes.dll",   r);
+            LoadClarionAssembly("SoftVelocity.Clarion.Classes.dll",           r);
+            LoadClarionAssembly("SoftVelocity.Clarion.Runtime.Procedures.dll", r);
 
-            var cfileType = fileIo.GetType("Clarion.CFile");
-            if (cfileType == null) { r.Ok = false; r.Error = "Clarion.CFile type not found in FileIO.dll."; return; }
-            r.Log.Add("CFile type: " + cfileType.AssemblyQualifiedName);
+            var cfileBaseType = fileIo.GetType("Clarion.CFile");
+            if (cfileBaseType == null) { r.Ok = false; r.Error = "Clarion.CFile type not found in FileIO.dll."; return; }
+            r.Log.Add("CFile base: " + cfileBaseType.AssemblyQualifiedName);
+
+            // Pick a concrete subclass — CFile itself is abstract. We look at
+            // every loaded assembly; Clarion preloads the whole Runtime.Classes
+            // tree so the driver-specific CFile flavours are in-process already.
+            var cfileType = PickConcreteCFileType(cfileBaseType, driver, r);
+            if (cfileType == null)
+            {
+                r.Ok = false;
+                r.Error = "No concrete CFile subclass found for driver '" + driver + "'. See log for candidates.";
+                return;
+            }
+            r.Log.Add("using concrete type: " + cfileType.FullName);
 
             // 4. Compute a record buffer sized to the sum of DDField sizes. This
             //    is our best-effort layout — native Clarion carries its own
@@ -458,6 +474,60 @@ namespace ClarionDctAddin
                 }
             }
             return null;
+        }
+
+        // Walk every loaded assembly looking for concrete descendants of CFile.
+        // Scores each candidate by how well its type name matches the driver
+        // keyword (TOPSPEED -> CTopSpeed / CTopspeedFile / CTPS / CTopSpeedFile).
+        // Returns the best match, or null if nothing inherits from CFile.
+        static Type PickConcreteCFileType(Type baseType, string driver, ReadResult r)
+        {
+            var drv = (driver ?? "").ToUpperInvariant();
+            var hints = new List<string>();
+            if (drv == "TOPSPEED" || drv == "TPS" || drv == "TOPSCAN" || drv == "TPSCAN")
+            { hints.Add("TOPSPEED"); hints.Add("TOPSCAN"); hints.Add("TPS"); }
+            else
+            { hints.Add(drv); }
+
+            var candidates = new List<Type>();
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+                catch { continue; }
+                if (types == null) continue;
+                foreach (var t in types)
+                {
+                    if (t == null) continue;
+                    try
+                    {
+                        if (t.IsAbstract || t.IsInterface) continue;
+                        if (!baseType.IsAssignableFrom(t)) continue;
+                        candidates.Add(t);
+                    }
+                    catch { }
+                }
+            }
+
+            foreach (var c in candidates) r.Log.Add("CFile candidate: " + c.FullName);
+            if (candidates.Count == 0) return null;
+
+            Type best = null;
+            int bestScore = int.MinValue;
+            foreach (var c in candidates)
+            {
+                var upper = c.Name.ToUpperInvariant();
+                int score = 0;
+                foreach (var h in hints) if (upper.IndexOf(h, StringComparison.Ordinal) >= 0) score += 10;
+                // Penalise generic helpers / abstract-looking names
+                if (upper.Contains("ABSTRACT") || upper.Contains("BASE")) score -= 5;
+                // Prefer shorter / simpler names when scores tie
+                score -= Math.Max(0, c.Name.Length - 20);
+                if (score > bestScore) { bestScore = score; best = c; }
+            }
+            r.Log.Add("best candidate score=" + bestScore + " -> " + (best == null ? "<null>" : best.FullName));
+            return best;
         }
 
         static Type ResolveClaStringType(Assembly fileIo, ReadResult r)
