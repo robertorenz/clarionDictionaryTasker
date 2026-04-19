@@ -123,7 +123,7 @@ namespace ClarionDctAddin
             {
                 allFindings = singleTable == null
                     ? LintEngine.RunFullScan(dict)
-                    : LintEngine.RunTableScan(singleTable);
+                    : LintEngine.RunTableScan(dict, singleTable);
             }
             finally { Cursor = Cursors.Default; }
             ApplyFilter();

@@ -38,6 +38,30 @@ namespace ClarionDctAddin
             return results;
         }
 
+        // Overload that also surfaces cross-table duplicate ExternalName findings
+        // involving this table — you don't notice them from a single-table scan
+        // unless the other offender is also in this table.
+        public static List<Finding> RunTableScan(object dict, object table)
+        {
+            var results = new List<Finding>();
+            RunTableChecks(table, results);
+            if (dict != null)
+            {
+                var dictFindings = new List<Finding>();
+                CheckDuplicateKeyExternalNames(DictModel.GetTables(dict), dictFindings);
+                var tName = DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "";
+                var prefix = tName + ".";
+                foreach (var finding in dictFindings)
+                    if (finding.Target != null
+                        && finding.Target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        results.Add(finding);
+            }
+            return results
+                .OrderByDescending(x => (int)x.Severity)
+                .ThenBy(x => x.Target, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         static void RunTableChecks(object table, List<Finding> f)
         {
             var tName = DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "<?>";
@@ -221,12 +245,58 @@ namespace ClarionDctAddin
 
         static void RunDictionaryChecks(object dict, IList<object> tables, List<Finding> f)
         {
-            // Nothing dictionary-global yet beyond aggregations, but slot is here
-            // for future rules like "duplicate table names", "orphan relation refs"
-            // etc.
             if (tables.Count == 0)
                 f.Add(new Finding { Severity = Severity.Error, Target = "<dictionary>", Rule = "no-tables",
                                     Message = "Dictionary contains zero tables." });
+
+            CheckDuplicateKeyExternalNames(tables, f);
+        }
+
+        // ExternalName collisions across keys will break SQL drivers — most
+        // databases forbid two indexes with the same name inside one schema.
+        // Emit one finding per occurrence so the user sees both sides of every
+        // pair in the report.
+        static void CheckDuplicateKeyExternalNames(IList<object> tables, List<Finding> f)
+        {
+            // External-name -> list of "TableName.KeyName" owners
+            var byName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tables)
+            {
+                var tName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "<?>";
+                var keys = DictModel.GetProp(t, "Keys") as IEnumerable;
+                if (keys == null) continue;
+                foreach (var k in keys)
+                {
+                    if (k == null) continue;
+                    var ext = DictModel.AsString(DictModel.GetProp(k, "ExternalName")) ?? "";
+                    if (string.IsNullOrWhiteSpace(ext)) continue; // empty-external-name covers these
+                    var kName = DictModel.AsString(DictModel.GetProp(k, "Name")) ?? "<?>";
+                    List<string> bucket;
+                    if (!byName.TryGetValue(ext, out bucket))
+                        byName[ext] = bucket = new List<string>();
+                    bucket.Add(tName + "." + kName);
+                }
+            }
+
+            foreach (var kv in byName)
+            {
+                if (kv.Value.Count < 2) continue;
+                var ext = kv.Key;
+                var owners = kv.Value;
+                for (int i = 0; i < owners.Count; i++)
+                {
+                    var self = owners[i];
+                    var others = new List<string>(owners.Count - 1);
+                    for (int j = 0; j < owners.Count; j++) if (j != i) others.Add(owners[j]);
+                    f.Add(new Finding
+                    {
+                        Severity = Severity.Error,
+                        Target   = self,
+                        Rule     = "duplicate-external-name",
+                        Message  = "ExternalName '" + ext + "' is also used by: " + string.Join(", ", others.ToArray())
+                    });
+                }
+            }
         }
 
         // Reuse the same component name list KeyCopier uses so the engine works
