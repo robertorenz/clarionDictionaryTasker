@@ -92,13 +92,30 @@ dotnet build -c Debug
 
 ## Deploy
 
-With Clarion 12 **closed** (the IDE holds a lock on its loaded DLLs), run:
+With Clarion 12 **closed** (the IDE holds a lock on its loaded DLLs), you have two options:
+
+### Option 1 — installer (for end users)
+
+If [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed on your build
+machine, run:
+
+```
+install\build-installer.bat
+```
+
+which produces `install\dist\DictionaryTasker-Setup-<version>.exe`. Ship that
+single `.exe` to a Clarion developer; double-clicking it walks them through
+picking the Clarion 12 folder, writes the files into
+`<clarion>\bin\Addins\Misc\ClarionDctAddin\`, and registers an uninstaller
+under Windows "Apps & features". See `install/README.md` for details.
+
+### Option 2 — deploy.bat (for quick local iteration)
 
 ```
 deploy.bat
 ```
 
-which copies `ClarionDctAddin.dll` + `ClarionDctAddin.addin` to:
+copies `ClarionDctAddin.dll` + `ClarionDctAddin.addin` straight to:
 
 ```
 C:\clarion12\bin\Addins\Misc\ClarionDctAddin\

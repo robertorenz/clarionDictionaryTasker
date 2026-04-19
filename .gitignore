@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Installer output
+install/dist/
+
 # Visual Studio
 .vs/
 *.suo
