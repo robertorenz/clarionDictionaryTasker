@@ -1170,6 +1170,11 @@ namespace ClarionDctAddin
             {
                 using (var dlg = new FieldListDialog(node.Table)) dlg.ShowDialog(FindForm());
             });
+            ctx.Items.Add(new ToolStripSeparator());
+            ctx.Items.Add("Lint this table...", null, delegate
+            {
+                using (var dlg = new LintReportDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
+            });
             ctx.Show(canvas, screenRelToCanvas);
         }
 

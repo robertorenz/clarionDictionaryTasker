@@ -136,11 +136,76 @@ namespace ClarionDctAddin
                         f.Add(new Finding { Severity = Severity.Info, Target = target, Rule = "no-picture",
                                             Message = "Field has no picture — displays will use the driver default." });
 
+                    // Picture category sanity — catch pictures that don't match their data type.
+                    CheckPictureShape(f, target, label, dataType, picture);
+
                     if (label.Contains(" "))
                         f.Add(new Finding { Severity = Severity.Warning, Target = target, Rule = "whitespace-in-label",
                                             Message = "Field label contains whitespace — most generators reject this." });
                 }
             }
+        }
+
+        // Verify that the picture string matches the category of the data type.
+        // DATE needs @d*, TIME needs @t*, numeric needs @n*, and strings must
+        // not carry a non-string picture. Mirrors the rules in
+        // PictureConsistencyDialog so the unified lint covers both.
+        static void CheckPictureShape(List<Finding> f, string target, string label, string dataType, string picture)
+        {
+            if (string.IsNullOrEmpty(picture)) return;
+            var dt = (dataType ?? "").ToUpperInvariant();
+            var p  = picture.ToLowerInvariant();
+
+            if (dt == "DATE")
+            {
+                if (!p.StartsWith("@d"))
+                    f.Add(new Finding { Severity = Severity.Error, Target = target, Rule = "picture-date-shape",
+                                        Message = "DATE field has picture '" + picture + "'; expected @d*." });
+                return;
+            }
+            if (dt == "TIME")
+            {
+                if (!p.StartsWith("@t"))
+                    f.Add(new Finding { Severity = Severity.Error, Target = target, Rule = "picture-time-shape",
+                                        Message = "TIME field has picture '" + picture + "'; expected @t*." });
+                return;
+            }
+            if (dt == "DECIMAL" || dt == "PDECIMAL" || dt == "REAL" || dt == "SREAL")
+            {
+                if (!p.StartsWith("@n"))
+                    f.Add(new Finding { Severity = Severity.Error, Target = target, Rule = "picture-numeric-shape",
+                                        Message = "Numeric field has picture '" + picture + "'; expected @n*." });
+                else if (LooksLikeMoney(label) && p.IndexOf('$') < 0)
+                    f.Add(new Finding { Severity = Severity.Info, Target = target, Rule = "picture-money-no-currency",
+                                        Message = "Money-looking label '" + label + "' has no currency marker; consider @n$*.*." });
+                return;
+            }
+            if (dt == "BYTE" || dt == "SHORT" || dt == "USHORT" || dt == "LONG" || dt == "ULONG")
+            {
+                if (!p.StartsWith("@n"))
+                    f.Add(new Finding { Severity = Severity.Warning, Target = target, Rule = "picture-int-shape",
+                                        Message = "Integer field has picture '" + picture + "'; expected @n*." });
+                return;
+            }
+            if (dt == "STRING" || dt == "CSTRING" || dt == "PSTRING")
+            {
+                if (p.StartsWith("@d") || p.StartsWith("@t") || p.StartsWith("@n"))
+                    f.Add(new Finding { Severity = Severity.Error, Target = target, Rule = "picture-string-shape",
+                                        Message = "STRING field has a non-string picture '" + picture + "'." });
+                return;
+            }
+        }
+
+        static bool LooksLikeMoney(string label)
+        {
+            if (string.IsNullOrEmpty(label)) return false;
+            var l = label.ToLowerInvariant();
+            string[] hints = { "amount", "amt", "price", "cost", "total", "balance",
+                               "money", "salary", "fee", "charge", "payment",
+                               "importe", "monto", "precio", "costo" };
+            for (int i = 0; i < hints.Length; i++)
+                if (l.IndexOf(hints[i], StringComparison.Ordinal) >= 0) return true;
+            return false;
         }
 
         static void RunDictionaryChecks(object dict, IList<object> tables, List<Finding> f)
