@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace ClarionDctAddin
 {
-    internal enum LauncherTileKind { BrowseTables, CopyFields, CopyKeys }
+    internal enum LauncherTileKind { BrowseTables, CopyFields, CopyKeys, Tools }
 
     internal class LauncherDialog : Form
     {
@@ -114,6 +114,10 @@ namespace ClarionDctAddin
                 "Copy keys to other tables with automatic component remap by field label and backup before writing.",
                 LauncherTileKind.CopyKeys,
                 OpenCopyKeys));
+            body.Controls.Add(MakeTile("More tools",
+                "Lint report, search, dictionary diff, SQL/Markdown/Model-class export, refactoring helpers, and more.",
+                LauncherTileKind.Tools,
+                OpenTools));
 
             Controls.Add(body);        // Fill — must be added before Left so it's hit-tested beneath docks.
             Controls.Add(imagePanel);  // Left
@@ -140,6 +144,7 @@ namespace ClarionDctAddin
         void OpenBrowse()     { Hide(); using (var d = new TableListDialog(dict))      d.ShowDialog(this); Show(); }
         void OpenCopyFields() { Hide(); using (var d = new BatchCopyDialog(dict))      d.ShowDialog(this); Show(); }
         void OpenCopyKeys()   { Hide(); using (var d = new BatchCopyKeysDialog(dict))  d.ShowDialog(this); Show(); }
+        void OpenTools()      { Hide(); using (var d = new ToolsDialog(dict))          d.ShowDialog(this); Show(); }
 
         void OpenHelp()
         {
@@ -292,6 +297,29 @@ namespace ClarionDctAddin
                         g.DrawLine(boldPen, shaftStart, cy, shaftEnd, cy);
                         g.DrawLine(boldPen, shaftEnd, cy, shaftEnd, cy + 8);
                         g.DrawLine(boldPen, shaftEnd - 8, cy, shaftEnd - 8, cy + 6);
+                        break;
+                    }
+                    case LauncherTileKind.Tools:
+                    {
+                        // Wrench + gear: tool-belt icon.
+                        int cx = box.X + box.Width / 2;
+                        int cy = box.Y + box.Height / 2;
+                        // Gear (hexagon of small rects around a circle)
+                        int gearR = 16;
+                        int toothLen = 6;
+                        for (int i = 0; i < 6; i++)
+                        {
+                            double a = i * Math.PI / 3.0;
+                            int tx = (int)(cx + Math.Cos(a) * (gearR - 1));
+                            int ty = (int)(cy + Math.Sin(a) * (gearR - 1));
+                            int ex = (int)(cx + Math.Cos(a) * (gearR + toothLen));
+                            int ey = (int)(cy + Math.Sin(a) * (gearR + toothLen));
+                            g.DrawLine(boldPen, tx, ty, ex, ey);
+                        }
+                        g.FillEllipse(lightBrush, cx - gearR, cy - gearR, gearR * 2, gearR * 2);
+                        g.DrawEllipse(boldPen,    cx - gearR, cy - gearR, gearR * 2, gearR * 2);
+                        g.FillEllipse(whiteBrush, cx - 6,     cy - 6,     12,         12);
+                        g.DrawEllipse(thinPen,    cx - 6,     cy - 6,     12,         12);
                         break;
                     }
                 }

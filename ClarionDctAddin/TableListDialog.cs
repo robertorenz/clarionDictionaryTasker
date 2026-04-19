@@ -116,6 +116,17 @@ namespace ClarionDctAddin
             lv.Columns.Add("Description", 440);
             lv.DoubleClick += delegate { ShowFieldsForSelection(); };
 
+            // Right-click menu — actions scoped to the selected table.
+            var ctx = new ContextMenuStrip();
+            ctx.Items.Add("Show fields...",      null, delegate { ShowFieldsForSelection(); });
+            ctx.Items.Add("Export to JSON...",   null, delegate { ExportSelected(); });
+            ctx.Items.Add("Copy table name",     null, delegate { CopySelectedName(); });
+            ctx.Items.Add(new ToolStripSeparator());
+            ctx.Items.Add("Lint this table...",  null, delegate { LintSelectedTable(); });
+            ctx.Items.Add(new ToolStripSeparator());
+            ctx.Items.Add("More dictionary tools...", null, delegate { OpenToolsDialog(); });
+            lv.ContextMenuStrip = ctx;
+
             var host = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0), BackColor = BgColor };
             host.Controls.Add(lv);
 
@@ -171,6 +182,34 @@ namespace ClarionDctAddin
                 if (lv.Items.Count > 0) lv.Items[0].Selected = true;
             }
             finally { lv.EndUpdate(); }
+        }
+
+        void CopySelectedName()
+        {
+            if (lv.SelectedItems.Count == 0) return;
+            var name = lv.SelectedItems[0].Text;
+            try
+            {
+                Clipboard.SetText(name);
+            }
+            catch { /* clipboard can fail under remote sessions */ }
+        }
+
+        void LintSelectedTable()
+        {
+            if (lv.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "Select a table first.", "Dict Tools",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var table = lv.SelectedItems[0].Tag;
+            using (var dlg = new LintReportDialog(dict, table)) dlg.ShowDialog(this);
+        }
+
+        void OpenToolsDialog()
+        {
+            using (var dlg = new ToolsDialog(dict)) dlg.ShowDialog(this);
         }
 
         void ShowFieldsForSelection()
