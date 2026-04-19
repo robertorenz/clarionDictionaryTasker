@@ -134,6 +134,7 @@ namespace ClarionDctAddin
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("Lint this table...",     null, delegate { LintSelectedTable(); });
             ctx.Items.Add("Fix fields...",          null, delegate { FixFieldsForSelected(); });
+            ctx.Items.Add("Fix keys...",            null, delegate { FixKeysForSelected(); });
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("More dictionary tools...", null, delegate { OpenToolsDialog(); });
             lv.ContextMenuStrip = ctx;
@@ -339,6 +340,18 @@ namespace ClarionDctAddin
             }
             var table = lv.SelectedItems[0].Tag;
             using (var dlg = new LintFixItDialog(dict, table)) dlg.ShowDialog(this);
+        }
+
+        void FixKeysForSelected()
+        {
+            if (lv.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "Select a table first.", "Fix keys",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var table = lv.SelectedItems[0].Tag;
+            using (var dlg = new LintFixKeysDialog(dict, table)) dlg.ShowDialog(this);
         }
 
         void LintSelectedTable()

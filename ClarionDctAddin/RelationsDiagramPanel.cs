@@ -1179,6 +1179,10 @@ namespace ClarionDctAddin
             {
                 using (var dlg = new LintFixItDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
             });
+            ctx.Items.Add("Fix keys...", null, delegate
+            {
+                using (var dlg = new LintFixKeysDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
+            });
             ctx.Show(canvas, screenRelToCanvas);
         }
 

@@ -98,9 +98,16 @@ namespace ClarionDctAddin
                 using (var dlg = new LintFixItDialog(dict, singleTable)) dlg.ShowDialog(this);
                 RunScan();
             };
+            var btnFixKeys = new Button { Text = "Fix keys...", Width = 140, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
+            btnFixKeys.Click += delegate
+            {
+                using (var dlg = new LintFixKeysDialog(dict, singleTable)) dlg.ShowDialog(this);
+                RunScan();
+            };
             btnPanel.Controls.Add(btnClose);
             btnPanel.Controls.Add(btnRescan);
             btnPanel.Controls.Add(btnFix);
+            btnPanel.Controls.Add(btnFixKeys);
 
             Controls.Add(lv);
             Controls.Add(btnPanel);

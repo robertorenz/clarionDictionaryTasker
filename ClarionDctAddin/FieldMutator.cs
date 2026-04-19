@@ -140,13 +140,17 @@ namespace ClarionDctAddin
             {
                 if (TryInvokeNoArgs(parent, "ChildListTouched")) steps.Add("file.ChildTouched");
                 if (TryInvokeOneArg(parent, "FieldChanged", field)) steps.Add("file.FieldChanged");
-                if (TryInvokeOneArg(parent, "ChildTouched", field)) steps.Add("file.ChildTouched(fld)");
+                if (TryInvokeOneArg(parent, "ChildTouched", field)) steps.Add("file.ChildTouched(item)");
 
-                // Fields collection change-tracker dictionary.
-                var fieldsColl = DictModel.GetProp(parent, "Fields");
-                if (fieldsColl != null)
+                // Find whichever collection on the parent actually contains this item
+                // — Fields for a DDField, Keys for a DDKey, Relations for a DDRelation,
+                // and so on. The change-tracker dictionary lives on that collection.
+                string ownerKind;
+                var owningColl = FindOwningCollection(parent, field, out ownerKind);
+                if (owningColl != null)
                 {
-                    if (RegisterInChangeTracker(fieldsColl, field, out var trackerName))
+                    steps.Add("owner=" + ownerKind);
+                    if (RegisterInChangeTracker(owningColl, field, out var trackerName))
                         steps.Add("coll." + trackerName);
                 }
             }
@@ -155,6 +159,29 @@ namespace ClarionDctAddin
             if (dict != null && TryInvokeNoArgs(dict, "ChildListTouched")) steps.Add("dict.ChildTouched");
 
             r.Messages.Add(tag + " -> " + string.Join(", ", steps.ToArray()));
+        }
+
+        // Which collection on `parent` actually contains `item`? Tries the common
+        // collection names in order and checks each for a reference-equal match.
+        static object FindOwningCollection(object parent, object item, out string name)
+        {
+            name = null;
+            if (parent == null || item == null) return null;
+            string[] candidates = { "Fields", "Keys", "Relations", "Triggers", "Aliases", "Components" };
+            foreach (var n in candidates)
+            {
+                var coll = DictModel.GetProp(parent, n);
+                if (coll == null) continue;
+                var en = coll as IEnumerable;
+                if (en == null) continue;
+                try
+                {
+                    foreach (var x in en)
+                        if (ReferenceEquals(x, item)) { name = n; return coll; }
+                }
+                catch { }
+            }
+            return null;
         }
 
         static object FindFirstNonNullProp(object src, params string[] names)
