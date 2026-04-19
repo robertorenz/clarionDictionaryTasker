@@ -1170,6 +1170,10 @@ namespace ClarionDctAddin
             {
                 using (var dlg = new FieldListDialog(node.Table)) dlg.ShowDialog(FindForm());
             });
+            ctx.Items.Add("View data...", null, delegate
+            {
+                using (var dlg = new ViewDataDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
+            });
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("Lint this table...", null, delegate
             {

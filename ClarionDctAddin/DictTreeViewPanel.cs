@@ -150,6 +150,13 @@ namespace ClarionDctAddin
                 if (table == null) return;
                 using (var dlg = new FieldListDialog(table)) dlg.ShowDialog(FindForm());
             };
+            var miViewData = new ToolStripMenuItem("View data...");
+            miViewData.Click += delegate
+            {
+                var table = GetContextTable();
+                if (table == null) return;
+                using (var dlg = new ViewDataDialog(dict, table)) dlg.ShowDialog(FindForm());
+            };
             var miLint = new ToolStripMenuItem("Lint this table...");
             miLint.Click += delegate
             {
@@ -173,6 +180,7 @@ namespace ClarionDctAddin
             };
             ctx.Items.Add(miSqlDdl);
             ctx.Items.Add(miFields);
+            ctx.Items.Add(miViewData);
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add(miLint);
             ctx.Items.Add(miFix);

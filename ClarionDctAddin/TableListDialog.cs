@@ -130,6 +130,7 @@ namespace ClarionDctAddin
             // Right-click menu — actions scoped to the selected table.
             var ctx = new ContextMenuStrip();
             ctx.Items.Add("Show fields...",         null, delegate { ShowFieldsForSelection(); });
+            ctx.Items.Add("View data...",           null, delegate { ViewDataForSelected(); });
             ctx.Items.Add("Export to JSON...",      null, delegate { ExportSelected(); });
             ctx.Items.Add("Export SQL DDL...",      null, delegate { ExportSqlForSelected(); });
             ctx.Items.Add("Copy table name",        null, delegate { CopySelectedName(); });
@@ -350,6 +351,18 @@ namespace ClarionDctAddin
             }
             var table = lv.SelectedItems[0].Tag;
             using (var dlg = new LintFixItDialog(dict, table)) dlg.ShowDialog(this);
+        }
+
+        void ViewDataForSelected()
+        {
+            if (lv.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "Select a table first.", "View data",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var table = lv.SelectedItems[0].Tag;
+            using (var dlg = new ViewDataDialog(dict, table)) dlg.ShowDialog(this);
         }
 
         void FixKeysForSelected()
