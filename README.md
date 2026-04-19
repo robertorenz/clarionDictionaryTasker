@@ -18,8 +18,9 @@ A SharpDevelop add-in for the **Clarion 12 IDE** that inspects the currently ope
 - Automatic `.tasker-bak-*` backup of the `.DCT` before any mutation.
 
 ### Validation & analysis (read-only)
-- **Lint report** — missing primary keys, empty tables, orphaned relations, duplicate keys, undocumented fields, malformed pictures (DATE needs `@d*`, numeric `@n*`; LONG/ULONG accept `@n`/`@d`/`@t` since Clarion stores dates as LONG).
-- **Fix fields (editable grid)** — the repairable subset of the lint shown in a DataGridView with Description and Picture columns editable inline; live re-check as you type; Apply writes through `FieldMutator` with a `.DCT` backup first.
+- **Lint report** — missing primary keys, empty tables, orphaned relations, duplicate keys, duplicate ExternalName across keys (SQL drivers forbid two indexes with the same name), undocumented fields, malformed pictures (DATE needs `@d*`, numeric `@n*`; LONG/ULONG accept `@n`/`@d`/`@t` since Clarion stores dates as LONG).
+- **Fix fields (editable grid)** — the repairable subset of the lint shown in a DataGridView with Description and Picture columns editable inline; live re-check as you type; auto-fill Description from heading / prompt / humanized label; Apply writes through `FieldMutator` with a `.DCT` backup first.
+- **Fix keys (editable grid)** — flags empty or duplicate ExternalNames; 8-style auto-fill (`UPPER_SNAKE`, `idx_snake`, Pascal, camel, ...) builds names from `Table + Key` with one click.
 - **Picture consistency** — flag DATE fields without `@d*`, numerics without `@n*`, STRING with a non-string picture, and labels that appear on many tables with divergent (type, picture) combos.
 - **Naming conventions** — tables UPPERCASE, prefixes 2-4 uppercase chars, labels with no whitespace / no digit-start, key-naming convention. Rules togglable at runtime.
 - **Health dashboard** — totals, top-10 largest tables, driver mix bar chart, relations-per-table histogram.

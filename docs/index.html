@@ -348,8 +348,11 @@
     <li><strong>Export SQL DDL...</strong> — preview window with a dialect picker.</li>
     <li><strong>Copy table name</strong>.</li>
     <li><strong>Lint this table...</strong> — per-table lint findings.</li>
-    <li><strong>Fix fields...</strong> — editable Description / Picture grid (see the
+    <li><strong>Fix fields...</strong> — editable Description / Picture grid with an
+        auto-fill toolbar for descriptions (see the
         <a href="#tools-lint">Validation &amp; lint</a> section).</li>
+    <li><strong>Fix keys...</strong> — editable ExternalName grid with auto-fill for
+        naming styles (<code>UPPER_SNAKE</code>, <code>lower_snake</code>, Pascal, camel, ...).</li>
     <li><strong>More dictionary tools...</strong> — opens the full tools catalogue.</li>
   </ul>
   <h4>Field browser</h4>
@@ -622,7 +625,7 @@
   <table>
     <thead><tr><th>Category</th><th>Tools</th></tr></thead>
     <tbody>
-      <tr><td><a href="#tools-lint">Validation &amp; lint</a></td><td>Lint report, Fix fields (editable grid), Picture consistency, Naming conventions</td></tr>
+      <tr><td><a href="#tools-lint">Validation &amp; lint</a></td><td>Lint report, Fix fields (editable grid), Fix keys (editable grid), Picture consistency, Naming conventions</td></tr>
       <tr><td><a href="#tools-analysis">Analysis &amp; stats</a></td><td>Health dashboard, Dead tables, Duplicate fields</td></tr>
       <tr><td><a href="#tools-search">Search &amp; navigation</a></td><td>Global search, Where used, Path finder</td></tr>
       <tr><td><a href="#tools-compare">Compare &amp; diff</a></td><td>Compare tables, Compare dictionaries, Change-log generator</td></tr>
@@ -652,6 +655,11 @@
   <ul>
     <li>Tables: empty, no keys, no primary key, no relations.</li>
     <li>Keys: empty components, duplicate component sets, empty <code>ExternalName</code>.</li>
+    <li><strong>Duplicate ExternalName across the dict</strong> — two keys sharing an
+        ExternalName break SQL drivers (most RDBMSs forbid two indexes of the same name in one
+        schema). Emits one Error finding per occurrence so both sides of every collision show
+        up, each with the other owners listed in the Message. Single-table scans also surface
+        cross-table collisions involving the scanned table.</li>
     <li>Fields: no description, no picture, whitespace in label.</li>
     <li>Picture shape — <code>DATE</code> needs <code>@d*</code>, <code>TIME</code>
         <code>@t*</code>, numerics <code>@n*</code>, STRING forbids <code>@d</code>/<code>@t</code>/<code>@n</code>.
@@ -686,11 +694,74 @@
         per-field.</li>
     <li><strong>Rescan</strong> picks up anything added to the dict in the meantime.</li>
   </ul>
+  <h4>Auto-fill for Description</h4>
+  <p>
+    Toolbar above the grid with a strategy dropdown plus <strong>Fill blanks</strong> /
+    <strong>Fill all (overwrite)</strong> buttons. Strategies:
+  </p>
+  <table>
+    <thead><tr><th>Strategy</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Best available</strong> (default)</td>
+          <td>heading &rarr; prompt &rarr; humanized label, first non-blank.</td></tr>
+      <tr><td>Humanized label</td>
+          <td><code>first_name</code> &rarr; "First name" · <code>CreatedOn</code> &rarr; "Created on" ·
+              <code>NO_DE_RECUPS</code> &rarr; "No de recups" · <code>IDField</code> &rarr; "Id field".
+              Splits on <code>_</code>/<code>-</code>/<code>.</code> plus camelCase boundaries
+              (including the trailing-abbreviation case where <code>ID</code> precedes
+              <code>Field</code>).</td></tr>
+      <tr><td>Column heading</td><td>Copy <code>DDField.ColumnHeading</code> verbatim.</td></tr>
+      <tr><td>Prompt text</td><td>Copy <code>DDField.PromptText</code> verbatim.</td></tr>
+      <tr><td>Label verbatim</td><td><code>CREATED_BY</code> stays <code>CREATED_BY</code>.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Suggested values land in the editable Description cell (amber tint, Issues column
+    re-evaluates) but nothing persists until you click <strong>Apply changes</strong>. Picture
+    values stay manual — auto-generating a picture from data type alone is too lossy.
+  </p>
   <p>
     Launched from the <strong>Fix fields...</strong> button on the Lint report dialog, or from
     right-click → <em>Fix fields...</em> on any table list (Tables tab / Tree / Relations).
     Scope follows the launcher: whole-dict scope from the lint report, single-table scope from
     a right-click.
+  </p>
+
+  <h3>Fix keys — editable grid</h3>
+  <p>
+    Same shape as Fix fields but targets <code>DDKey</code>. Flags keys with an empty
+    <code>ExternalName</code>, zero components, or a component signature that duplicates
+    another key in the same table. Only the ExternalName column is editable inline; the rest
+    is context (table, key, type, components, Unique / Primary flags, issues).
+  </p>
+  <h4>Auto-fill for ExternalName</h4>
+  <p>
+    Same toolbar pattern — strategy dropdown + <strong>Fill blanks</strong> /
+    <strong>Fill all (overwrite)</strong>. Eight naming styles, each generating the name
+    from the owning table and the key name:
+  </p>
+  <table>
+    <thead><tr><th>Style</th><th>Example (<code>CLIENTES</code> + <code>guidkey</code>)</th></tr></thead>
+    <tbody>
+      <tr><td><code>UPPER_SNAKE</code></td><td><code>CLIENTES_GUIDKEY</code></td></tr>
+      <tr><td><code>lower_snake</code></td><td><code>clientes_guidkey</code></td></tr>
+      <tr><td><code>Camel_Snake</code></td><td><code>Clientes_guidkey</code></td></tr>
+      <tr><td><code>Pascal</code></td><td><code>ClientesGuidkey</code></td></tr>
+      <tr><td><code>camel</code></td><td><code>clientesGuidkey</code></td></tr>
+      <tr><td><code>idx_snake</code></td><td><code>idx_clientes_guidkey</code></td></tr>
+      <tr><td>Key only</td><td><code>guidkey</code></td></tr>
+      <tr><td>Table prefix</td><td><code>CLIENTES_guidkey</code> (cases preserved)</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Pair with the <em>duplicate-external-name</em> lint rule: open Lint report → see the
+    Errors → click <strong>Fix keys...</strong> → pick <code>UPPER_SNAKE</code> →
+    <strong>Fill all (overwrite)</strong> → Apply → every index gets a unique
+    <code>TABLE_KEY</code> name in one shot.
+  </p>
+  <p>
+    Launched from the <strong>Fix keys...</strong> button on the Lint report dialog, or
+    right-click → <em>Fix keys...</em> on any table list.
   </p>
 
   <h3>Picture consistency (standalone)</h3>
@@ -1132,7 +1203,8 @@ R     &lt;name&gt;  &lt;related-table&gt;
       <tr><td><code>ToolsDialog.cs</code></td><td>Catalogue window — categorised grid of every dictionary tool. Bold = implemented.</td></tr>
       <tr><td><code>LintEngine.cs</code> / <code>LintReportDialog.cs</code></td><td>Structural lint findings + report dialog.</td></tr>
       <tr><td><code>PictureConsistencyDialog.cs</code> / <code>NamingConventionsDialog.cs</code></td><td>Style lints with configurable rules.</td></tr>
-      <tr><td><code>LintFixItDialog.cs</code></td><td>Editable <code>DataGridView</code> of fields flagged for missing or malformed description / picture; applies edits through <code>FieldMutator</code>.</td></tr>
+      <tr><td><code>LintFixItDialog.cs</code></td><td>Editable <code>DataGridView</code> of fields flagged for missing or malformed description / picture, plus a Description auto-fill toolbar (heading / prompt / humanized label / verbatim).</td></tr>
+      <tr><td><code>LintFixKeysDialog.cs</code></td><td>Editable grid of keys flagged for empty or duplicate <code>ExternalName</code>, plus an auto-fill toolbar with 8 naming-style options.</td></tr>
       <tr><td><code>HealthDashboardDialog.cs</code> / <code>DeadTablesDialog.cs</code> / <code>DuplicateFieldsDialog.cs</code></td><td>Analysis dialogs (stats, dead tables, duplicate fields).</td></tr>
       <tr><td><code>GlobalSearchDialog.cs</code> / <code>WhereUsedDialog.cs</code> / <code>PathFinderDialog.cs</code></td><td>Search + navigation across the dict.</td></tr>
       <tr><td><code>CompareTablesDialog.cs</code> / <code>CompareDictionariesDialog.cs</code> / <code>ChangeLogDialog.cs</code></td><td>Diff dialogs (in-dict, live-vs-snapshot, snapshot-vs-snapshot).</td></tr>
@@ -1140,7 +1212,7 @@ R     &lt;name&gt;  &lt;related-table&gt;
       <tr><td><code>SqlDdlGenerator.cs</code> / <code>SqlDdlDialog.cs</code></td><td>5-dialect DDL generator + live-preview dialog. Remembers preferred dialect via <code>Settings</code>.</td></tr>
       <tr><td><code>ModelClassesGenerator.cs</code> / <code>ModelClassesDialog.cs</code></td><td>C# + TypeScript emitters with PascalCase / camelCase name mapping.</td></tr>
       <tr><td><code>MarkdownGenerator.cs</code> / <code>MarkdownDialog.cs</code></td><td>Full-dict or single-table Markdown reference.</td></tr>
-      <tr><td><code>FieldMutator.cs</code></td><td>Shared helper for in-place field property edits (rename, retype, description / picture tweaks). After the write it fires the full change-tracker fan-out: per-field flags, per-field notify methods, parent-file <code>ChildListTouched</code>, probe for and register in the <code>Fields</code> collection's <code>modifiedItems</code> / <code>changedItems</code> / … tracker, dict-level <code>ChildListTouched</code>, and view <code>IsDirty</code>. Each probe that succeeded is logged so unknown-build member names surface in the result dialog.</td></tr>
+      <tr><td><code>FieldMutator.cs</code></td><td>Shared helper for in-place property edits on any dict item (fields, keys, relations, ...). After the write it fires the full change-tracker fan-out: per-item flags, per-item notify methods, parent <code>ChildListTouched</code>, <code>FindOwningCollection</code> walks Fields/Keys/Relations/Triggers/Aliases/Components for the one that contains the target by reference, then registers the item in that collection's <code>modifiedItems</code> / <code>changedItems</code> / ... tracker. Dict-level <code>ChildListTouched</code> and view <code>IsDirty</code> close the loop. Every probe that succeeded is logged so unknown-build member names surface in the result dialog.</td></tr>
       <tr><td><code>SafeRenameFieldDialog.cs</code> / <code>BatchRenameDialog.cs</code> / <code>BatchRetypeDialog.cs</code></td><td>Refactor tools built on <code>FieldMutator</code>.</td></tr>
       <tr><td><code>StandardAuditPackDialog.cs</code></td><td>Audit-field propagator; runs through <code>FieldCopier.Apply</code>.</td></tr>
       <tr><td><code>RelationsMapExportDialog.cs</code></td><td>Standalone SVG export with its own grid layout.</td></tr>
@@ -1216,14 +1288,21 @@ R     &lt;name&gt;  &lt;related-table&gt;
         <code>NotifyUpdate</code>, <code>NotifyChanged</code>, <code>MarkChanged</code>.</li>
     <li>Walk up to the parent <code>DDFile</code> and call <code>ChildListTouched</code>,
         <code>FieldChanged(field)</code>, <code>ChildTouched(field)</code>.</li>
-    <li><strong>Probe the parent <code>Fields</code> collection</strong> for a change-tracker
-        dictionary — candidate names <code>modifiedItems</code>, <code>changedItems</code>,
-        <code>updatedItems</code>, <code>dirtyItems</code>, <code>addedItems</code> — and
-        register the field there keyed by its <code>Id</code>. This is the modification-side
-        analogue of the <code>addedItems</code> hook <code>FieldCopier</code> uses for inserts,
-        and in practice it's the one the save pipeline reads when deciding which records to
-        write back to the native TPS store. Without it, the edit stays in the managed model
-        and is lost when the <code>.DCT</code> saves.</li>
+    <li><strong>Find the owning collection</strong> — <code>FindOwningCollection</code>
+        walks <code>Fields</code> / <code>Keys</code> / <code>Relations</code> /
+        <code>Triggers</code> / <code>Aliases</code> / <code>Components</code> on the parent
+        and picks the one that contains the target by reference. That's how the same
+        <code>SetStringProp</code> path works for fields <em>and</em> keys without caller-side
+        special casing — a <code>DDKey</code> edit naturally registers on
+        <code>parent.Keys</code>, not <code>parent.Fields</code>.</li>
+    <li><strong>Register in the change-tracker dictionary</strong> on that owning collection
+        — candidate names <code>modifiedItems</code>, <code>changedItems</code>,
+        <code>updatedItems</code>, <code>dirtyItems</code>, <code>addedItems</code> — keyed
+        by the item's <code>Id</code>. This is the modification-side analogue of the
+        <code>addedItems</code> hook <code>FieldCopier</code> uses for inserts, and in
+        practice it's the one the save pipeline reads when deciding which records to write
+        back to the native TPS store. Without it, the edit stays in the managed model and is
+        lost when the <code>.DCT</code> saves.</li>
     <li>Call <code>ChildListTouched</code> on the <code>DataDictionary</code>.</li>
     <li>Run <code>FieldMutator.ForceMarkDirty(dict, viewContent, result)</code> for the usual
         IsDirty / OnIsDirtyChanged cascade so Clarion's Save button lights up.</li>
