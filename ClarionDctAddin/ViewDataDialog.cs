@@ -70,11 +70,14 @@ namespace ClarionDctAddin
             btnShowLog.Click += delegate { ToggleLog(); };
             var btnConn = new Button { Text = "Change connection...", Left = 354, Top = 4, Width = 160, Height = 30, FlatStyle = FlatStyle.System };
             btnConn.Click += delegate { ChangeConnection(); };
+            var btnTopScan = new Button { Text = "Open in TopScan", Left = 524, Top = 4, Width = 150, Height = 30, FlatStyle = FlatStyle.System };
+            btnTopScan.Click += delegate { OpenInTopScan(); };
             toolbar.Controls.Add(lblRows);
             toolbar.Controls.Add(numRows);
             toolbar.Controls.Add(btnLoad);
             toolbar.Controls.Add(btnShowLog);
             toolbar.Controls.Add(btnConn);
+            toolbar.Controls.Add(btnTopScan);
 
             lblStatus = new Label
             {
@@ -233,6 +236,48 @@ namespace ClarionDctAddin
                 Settings.SetMssqlConnectionFor(dictName, dlg.ResultConnectionString);
                 return dlg.ResultConnectionString;
             }
+        }
+
+        void OpenInTopScan()
+        {
+            // Resolve the TPS path the same way the inline reader does — FullPathName,
+            // falling back to the DefaultFileName alongside the .DCT.
+            var tpsPath = ResolveTpsPath();
+            if (string.IsNullOrEmpty(tpsPath))
+            {
+                MessageBox.Show(this, "Could not resolve a .TPS path for this table.",
+                    "TopScan", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string err;
+            if (!TopScanLauncher.Launch(tpsPath, out err))
+            {
+                MessageBox.Show(this, err, "TopScan", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            lblStatus.Text = "Launched TopScan on " + tpsPath;
+        }
+
+        string ResolveTpsPath()
+        {
+            var full = DictModel.AsString(DictModel.GetProp(table, "FullPathName")) ?? "";
+            if (!string.IsNullOrEmpty(full) && File.Exists(full)) return full;
+            var defName = DictModel.AsString(DictModel.GetProp(table, "DefaultFileName")) ?? full;
+            if (string.IsNullOrEmpty(defName))
+                defName = (DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "table") + ".tps";
+            var dctPath = DictModel.GetDictionaryFileName(dict);
+            if (!string.IsNullOrEmpty(dctPath))
+            {
+                var dir = Path.GetDirectoryName(dctPath);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    var cand = Path.Combine(dir, defName);
+                    if (File.Exists(cand)) return cand;
+                    var cand2 = Path.Combine(dir, Path.GetFileName(defName));
+                    if (File.Exists(cand2)) return cand2;
+                }
+            }
+            return full;
         }
 
         void ChangeConnection()

@@ -2,7 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 
 namespace ClarionDctAddin
@@ -99,25 +101,20 @@ namespace ClarionDctAddin
             if (cfileBaseType == null) { r.Ok = false; r.Error = "Clarion.CFile type not found in FileIO.dll."; return; }
             r.Log.Add("CFile base: " + cfileBaseType.AssemblyQualifiedName);
 
-            // Pick a concrete subclass — CFile itself is abstract. We look at
-            // every loaded assembly; Clarion preloads the whole Runtime.Classes
-            // tree so the driver-specific CFile flavours are in-process already.
-            var cfileType = PickConcreteCFileType(cfileBaseType, driver, r);
+            // CFile is abstract; every concrete subclass in the Clarion assemblies is
+            // schema-bound (Clarion's own dict-storage types). To get a generic reader
+            // we EMIT our own concrete subclass at runtime: inherits CFile, stubs every
+            // abstract member with a default-return body, leaves non-abstract Open /
+            // Next / Close etc. inherited from the base.
+            LogAbstractMembers(cfileBaseType, r);
+            var cfileType = EmitDynamicCFileSubclass(cfileBaseType, r);
             if (cfileType == null)
             {
                 r.Ok = false;
-                r.Error = "No concrete CFile subclass found for driver '" + driver + "'. See log for candidates.";
+                r.Error = "Could not emit a dynamic CFile subclass — the abstract surface on this Clarion build is larger than the stub generator handles.";
                 return;
             }
-            r.Log.Add("using concrete type: " + cfileType.FullName);
-
-            // Deeper diagnostics: static methods on the base CFile might expose a
-            // factory, and any type anywhere named *Topspeed* / *TPS* is worth
-            // inspecting.
-            LogStaticMethods(cfileBaseType, "CFile", r);
-            FindByKeyword("TOPSPEED", r);
-            FindByKeyword("TPS",      r);
-            FindByKeyword("TopScan",  r);
+            r.Log.Add("using emitted concrete type: " + cfileType.FullName);
 
             // 4. Compute a record buffer sized to the sum of DDField sizes. This
             //    is our best-effort layout — native Clarion carries its own
@@ -482,6 +479,117 @@ namespace ClarionDctAddin
                 }
             }
             return null;
+        }
+
+        // Emit a concrete CFile subclass at runtime. Every abstract method on the
+        // base gets a minimal stub body (return default for its return type). If
+        // CFile's inherited Open / Next / Close don't invoke those stubs during
+        // a read, we win — the TPS driver populates the record buffer straight
+        // from disk and we parse it via DDField offsets. If any inherited method
+        // DOES call a stubbed member we'll hit a safe no-op return rather than
+        // an abstract-method-called exception.
+        static Type EmitDynamicCFileSubclass(Type cfileBase, ReadResult r)
+        {
+            try
+            {
+                var asmName = new AssemblyName("DynCFile_" + Guid.NewGuid().ToString("N"));
+                var asmBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(asmName, AssemblyBuilderAccess.Run);
+                var modBuilder = asmBuilder.DefineDynamicModule(asmName.Name);
+                var typeBuilder = modBuilder.DefineType(
+                    "DynCFileImpl_" + Guid.NewGuid().ToString("N"),
+                    TypeAttributes.Public | TypeAttributes.Class,
+                    cfileBase);
+
+                // Collect all abstract methods across the inheritance chain.
+                var handled = new HashSet<string>(StringComparer.Ordinal);
+                var t = cfileBase;
+                while (t != null && t != typeof(object))
+                {
+                    foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    {
+                        if (!m.IsAbstract) continue;
+                        var sig = MethodSignature(m);
+                        if (handled.Contains(sig)) continue;
+                        handled.Add(sig);
+                        try { EmitStub(typeBuilder, m); }
+                        catch (Exception ex) { r.Log.Add("emit stub " + m.Name + " failed: " + ex.Message); }
+                    }
+                    t = t.BaseType;
+                }
+
+                var concrete = typeBuilder.CreateType();
+                r.Log.Add("emitted " + handled.Count + " stubs onto " + concrete.FullName);
+                return concrete;
+            }
+            catch (Exception ex)
+            {
+                r.Log.Add("EmitDynamicCFileSubclass failed: " + (ex.InnerException ?? ex).GetType().Name + " - " + (ex.InnerException ?? ex).Message);
+                return null;
+            }
+        }
+
+        static string MethodSignature(MethodInfo m)
+        {
+            var parms = m.GetParameters().Select(p => p.ParameterType.FullName ?? p.ParameterType.Name).ToArray();
+            return m.Name + "(" + string.Join(",", parms) + ")";
+        }
+
+        static void EmitStub(TypeBuilder tb, MethodInfo abs)
+        {
+            var parms = abs.GetParameters();
+            var parmTypes = parms.Select(p => p.ParameterType).ToArray();
+            var attrs = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig;
+            // If the abstract comes from an interface-style member, mark NewSlot; otherwise override.
+            if (abs.IsFinal || abs.Attributes.HasFlag(MethodAttributes.NewSlot)) attrs |= MethodAttributes.NewSlot;
+            else                                                                 attrs |= MethodAttributes.ReuseSlot;
+
+            var mb = tb.DefineMethod(abs.Name, attrs, abs.CallingConvention, abs.ReturnType, parmTypes);
+
+            // Copy parameter names & ref/out modifiers (keeps the JIT happy and debuggers readable).
+            for (int i = 0; i < parms.Length; i++)
+                mb.DefineParameter(i + 1, parms[i].Attributes, parms[i].Name);
+
+            var il = mb.GetILGenerator();
+            if (abs.ReturnType == typeof(void))
+            {
+                il.Emit(OpCodes.Ret);
+            }
+            else if (abs.ReturnType.IsValueType)
+            {
+                var loc = il.DeclareLocal(abs.ReturnType);
+                il.Emit(OpCodes.Ldloca_S, (byte)loc.LocalIndex);
+                il.Emit(OpCodes.Initobj, abs.ReturnType);
+                il.Emit(OpCodes.Ldloc, loc);
+                il.Emit(OpCodes.Ret);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ret);
+            }
+
+            tb.DefineMethodOverride(mb, abs);
+        }
+
+        static void LogAbstractMembers(Type t, ReadResult r)
+        {
+            if (t == null) return;
+            int n = 0;
+            var cur = t;
+            while (cur != null && cur != typeof(object))
+            {
+                foreach (var m in cur.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                {
+                    if (!m.IsAbstract) continue;
+                    n++;
+                    var ps = m.GetParameters();
+                    var sb = new StringBuilder();
+                    for (int i = 0; i < ps.Length; i++) { if (i > 0) sb.Append(", "); sb.Append(ps[i].ParameterType.Name); }
+                    r.Log.Add("abstract [" + cur.Name + "]: " + m.ReturnType.Name + " " + m.Name + "(" + sb + ")");
+                }
+                cur = cur.BaseType;
+            }
+            r.Log.Add("total abstract members on " + t.Name + ": " + n);
         }
 
         // Walk every loaded assembly looking for concrete descendants of CFile.
