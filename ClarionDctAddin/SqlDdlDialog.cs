@@ -66,7 +66,7 @@ namespace ClarionDctAddin
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Font = new Font("Segoe UI", 9F)
             };
-            cboDialect.Items.AddRange(new object[] { "SQL Server", "PostgreSQL", "SQLite" });
+            cboDialect.Items.AddRange(new object[] { "SQL Server", "PostgreSQL", "SQLite", "MySQL", "MariaDB" });
             cboDialect.SelectedIndex = 0;
             cboDialect.SelectedIndexChanged += delegate { if (!inSetup) Regenerate(); };
 

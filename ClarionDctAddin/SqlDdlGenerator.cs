@@ -11,7 +11,7 @@ namespace ClarionDctAddin
     // and SQLite. Strictly read-only; no dictionary mutation.
     internal static class SqlDdlGenerator
     {
-        public enum Dialect { SqlServer, Postgres, SQLite }
+        public enum Dialect { SqlServer, Postgres, SQLite, MySql, MariaDb }
 
         public sealed class Options
         {
@@ -151,6 +151,8 @@ namespace ClarionDctAddin
                 !string.IsNullOrEmpty(picture) && picture.StartsWith("@D", StringComparison.OrdinalIgnoreCase))
                 return "DATE";
 
+            bool isMySqlFamily = dialect == Dialect.MySql || dialect == Dialect.MariaDb;
+
             switch (upperType)
             {
                 case "STRING":
@@ -160,7 +162,7 @@ namespace ClarionDctAddin
                 case "PSTRING":
                     return "VARCHAR(" + Clamp(size > 0 ? size - 1 : chars, 1, 8000) + ")";
                 case "BYTE":
-                    return dialect == Dialect.SqlServer ? "TINYINT" : "SMALLINT";
+                    return (dialect == Dialect.SqlServer || isMySqlFamily) ? "TINYINT" : "SMALLINT";
                 case "SHORT":
                     return "SMALLINT";
                 case "USHORT":
@@ -170,13 +172,17 @@ namespace ClarionDctAddin
                 case "ULONG":
                     return "BIGINT";
                 case "REAL":
-                    return dialect == Dialect.Postgres ? "DOUBLE PRECISION" : "FLOAT";
+                    if (dialect == Dialect.Postgres)   return "DOUBLE PRECISION";
+                    if (isMySqlFamily)                 return "DOUBLE";
+                    return "FLOAT";
                 case "SREAL":
-                    return "REAL";
+                    return isMySqlFamily ? "FLOAT" : "REAL";
                 case "BFLOAT4":
-                    return "REAL";
+                    return isMySqlFamily ? "FLOAT" : "REAL";
                 case "BFLOAT8":
-                    return dialect == Dialect.Postgres ? "DOUBLE PRECISION" : "FLOAT";
+                    if (dialect == Dialect.Postgres)   return "DOUBLE PRECISION";
+                    if (isMySqlFamily)                 return "DOUBLE";
+                    return "FLOAT";
                 case "DECIMAL":
                 case "PDECIMAL":
                 {
@@ -194,6 +200,8 @@ namespace ClarionDctAddin
                     {
                         case Dialect.SqlServer: return "NVARCHAR(MAX)";
                         case Dialect.Postgres:  return "TEXT";
+                        case Dialect.MySql:
+                        case Dialect.MariaDb:   return "LONGTEXT";
                         default:                return "TEXT";
                     }
                 case "BLOB":
@@ -201,10 +209,12 @@ namespace ClarionDctAddin
                     {
                         case Dialect.SqlServer: return "VARBINARY(MAX)";
                         case Dialect.Postgres:  return "BYTEA";
+                        case Dialect.MySql:
+                        case Dialect.MariaDb:   return "LONGBLOB";
                         default:                return "BLOB";
                     }
                 case "GROUP":
-                    return "/* GROUP - manual */ NVARCHAR(100)";
+                    return "/* GROUP - manual */ " + (dialect == Dialect.SqlServer ? "NVARCHAR(100)" : "VARCHAR(100)");
             }
             return "/* " + t + " */ VARCHAR(50)";
         }
@@ -219,6 +229,8 @@ namespace ClarionDctAddin
                          + QuoteIdent(tableName, dialect) + ";";
                 case Dialect.Postgres:
                 case Dialect.SQLite:
+                case Dialect.MySql:
+                case Dialect.MariaDb:
                     return "DROP TABLE IF EXISTS " + QuoteIdent(tableName, dialect) + ";";
             }
             return "";
@@ -244,6 +256,8 @@ namespace ClarionDctAddin
                 case Dialect.SqlServer: return "[" + name + "]";
                 case Dialect.Postgres:
                 case Dialect.SQLite:    return "\"" + name + "\"";
+                case Dialect.MySql:
+                case Dialect.MariaDb:   return "`" + name.Replace("`", "``") + "`";
             }
             return name;
         }
