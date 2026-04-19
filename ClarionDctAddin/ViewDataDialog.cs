@@ -68,10 +68,13 @@ namespace ClarionDctAddin
             btnLoad.Click += delegate { LoadRows(); };
             btnShowLog = new Button { Text = "Show log", Left = 234, Top = 4, Width = 110, Height = 30, FlatStyle = FlatStyle.System };
             btnShowLog.Click += delegate { ToggleLog(); };
+            var btnConn = new Button { Text = "Change connection...", Left = 354, Top = 4, Width = 160, Height = 30, FlatStyle = FlatStyle.System };
+            btnConn.Click += delegate { ChangeConnection(); };
             toolbar.Controls.Add(lblRows);
             toolbar.Controls.Add(numRows);
             toolbar.Controls.Add(btnLoad);
             toolbar.Controls.Add(btnShowLog);
+            toolbar.Controls.Add(btnConn);
 
             lblStatus = new Label
             {
@@ -171,7 +174,14 @@ namespace ClarionDctAddin
 
         void LoadViaSql(int n)
         {
-            var r = SqlTableAccessor.Read(dict, table, n);
+            var connStr = ResolveMssqlConnection(promptIfMissing: true);
+            if (connStr == null)
+            {
+                lblStatus.Text = "Connection cancelled.";
+                return;
+            }
+
+            var r = SqlTableAccessor.Read(dict, table, n, connStr);
             lastSqlResult = r;
             grid.Columns.Clear();
             grid.Rows.Clear();
@@ -193,6 +203,48 @@ namespace ClarionDctAddin
                 grid.Rows.Add(row.Select(v => v == null ? "" : v.ToString()).ToArray());
             lblStatus.Text = r.Rows.Count + " row(s) loaded via MSSQL   ·   "
                 + grid.Columns.Count + " columns";
+        }
+
+        // Pulls the connection string from:
+        //   1. the saved per-dict Settings entry (skips the prompt on reloads),
+        //   2. the dict's Owner string if it's a literal 'server,database,...',
+        //   3. an interactive prompt (saved on OK for next time).
+        // Returns null when the user cancels the prompt.
+        string ResolveMssqlConnection(bool promptIfMissing)
+        {
+            var dictName = DictModel.GetDictionaryName(dict) ?? "dict";
+            var saved = Settings.MssqlConnectionFor(dictName);
+            if (!string.IsNullOrEmpty(saved)) return saved;
+
+            var owner = DictModel.AsString(DictModel.GetProp(table, "OwnerName")) ?? "";
+            if (!string.IsNullOrWhiteSpace(owner)
+                && !SqlTableAccessor.IsRuntimeOwnerRef(owner))
+            {
+                string ignored;
+                var fromOwner = SqlTableAccessor.TryBuildConnectionStringFromOwner(owner, out ignored);
+                if (!string.IsNullOrEmpty(fromOwner)) return fromOwner;
+            }
+
+            if (!promptIfMissing) return null;
+
+            using (var dlg = new SqlConnectionPromptDialog(dictName, saved))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return null;
+                Settings.SetMssqlConnectionFor(dictName, dlg.ResultConnectionString);
+                return dlg.ResultConnectionString;
+            }
+        }
+
+        void ChangeConnection()
+        {
+            var dictName = DictModel.GetDictionaryName(dict) ?? "dict";
+            var current = Settings.MssqlConnectionFor(dictName);
+            using (var dlg = new SqlConnectionPromptDialog(dictName, current))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                Settings.SetMssqlConnectionFor(dictName, dlg.ResultConnectionString);
+                lblStatus.Text = "Connection updated — click Load to reload.";
+            }
         }
 
         void LoadViaClarionFile(int n)

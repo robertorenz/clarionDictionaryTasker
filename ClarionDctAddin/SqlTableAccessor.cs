@@ -39,8 +39,13 @@ namespace ClarionDctAddin
 
         public static ReadResult Read(object dict, object table, int maxRows)
         {
+            return Read(dict, table, maxRows, null);
+        }
+
+        public static ReadResult Read(object dict, object table, int maxRows, string overrideConnStr)
+        {
             var r = new ReadResult();
-            try { DoRead(dict, table, maxRows, r); }
+            try { DoRead(dict, table, maxRows, r, overrideConnStr); }
             catch (Exception ex)
             {
                 var inner = ex.InnerException ?? ex;
@@ -51,7 +56,22 @@ namespace ClarionDctAddin
             return r;
         }
 
-        static void DoRead(object dict, object table, int maxRows, ReadResult r)
+        // Returns true when the Owner string is a Clarion variable reference
+        // (e.g. "!glo:owner") that can't be resolved from the dict's metadata.
+        public static bool IsRuntimeOwnerRef(string owner)
+        {
+            if (string.IsNullOrWhiteSpace(owner)) return false;
+            return owner.TrimStart().StartsWith("!", StringComparison.Ordinal);
+        }
+
+        public static string TryBuildConnectionStringFromOwner(string owner, out string error)
+        {
+            var r = new ReadResult();
+            var s = BuildConnectionString(owner, r, out error);
+            return s;
+        }
+
+        static void DoRead(object dict, object table, int maxRows, ReadResult r, string overrideConnStr)
         {
             var driver   = DictModel.AsString(DictModel.GetProp(table, "FileDriverName")) ?? "";
             var fullPath = DictModel.AsString(DictModel.GetProp(table, "FullPathName"))   ?? "";
@@ -69,12 +89,20 @@ namespace ClarionDctAddin
                 return;
             }
 
-            string connStr = BuildConnectionString(owner, r, out string connErr);
-            if (connStr == null)
+            string connStr = overrideConnStr;
+            if (string.IsNullOrEmpty(connStr))
             {
-                r.Ok = false;
-                r.Error = connErr;
-                return;
+                connStr = BuildConnectionString(owner, r, out string connErr);
+                if (connStr == null)
+                {
+                    r.Ok = false;
+                    r.Error = connErr;
+                    return;
+                }
+            }
+            else
+            {
+                r.Log.Add("using saved / prompted connection");
             }
 
             var sqlTableName = !string.IsNullOrEmpty(fullPath) ? fullPath : tName;
@@ -114,8 +142,12 @@ namespace ClarionDctAddin
             error = null;
             if (string.IsNullOrWhiteSpace(owner))
             {
-                error = "No OwnerName on the table — add one, or supply an explicit connection string "
-                      + "(not yet wired up). Expected form: server,database[,user,password].";
+                error = "No OwnerName on the table — supply a connection below.";
+                return null;
+            }
+            if (IsRuntimeOwnerRef(owner))
+            {
+                error = "Owner is a runtime variable ('" + owner + "') — enter a connection below.";
                 return null;
             }
 
@@ -129,7 +161,7 @@ namespace ClarionDctAddin
             var parts = owner.Split(',');
             if (parts.Length < 2)
             {
-                error = "OwnerName '" + owner + "' doesn't look like 'server,database[,user,password]'.";
+                error = "OwnerName '" + owner + "' doesn't look like 'server,database[,user,password]' — enter a connection below.";
                 return null;
             }
 

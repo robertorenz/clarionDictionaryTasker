@@ -140,6 +140,29 @@ namespace ClarionDctAddin
         public static bool NamingLblNoDigitStart  { get { return GetBool(KeyNamingLblNoDigitStart,  true); } set { SetBool(KeyNamingLblNoDigitStart, value); } }
         public static bool NamingKeyConvention    { get { return GetBool(KeyNamingKeyConvention,    true); } set { SetBool(KeyNamingKeyConvention, value); } }
 
+        // MSSQL connection per dict, saved so !glo:owner dicts don't re-prompt
+        // every time. Key is slugified to keep the settings file sane.
+        public static string MssqlConnectionFor(string dictName)
+        {
+            return Get("mssql_conn_" + Slug(dictName), "");
+        }
+        public static void SetMssqlConnectionFor(string dictName, string connStr)
+        {
+            Set("mssql_conn_" + Slug(dictName), connStr ?? "");
+        }
+        public static void ClearMssqlConnectionFor(string dictName)
+        {
+            Set("mssql_conn_" + Slug(dictName), "");
+        }
+        static string Slug(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "unknown";
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (var c in s)
+                sb.Append(char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_');
+            return sb.ToString();
+        }
+
         public static bool GlobalSearchRegex        { get { return GetBool(KeyGlobalSearchRegex,        false); } set { SetBool(KeyGlobalSearchRegex, value); } }
         public static bool GlobalSearchTables       { get { return GetBool(KeyGlobalSearchTables,       true); } set { SetBool(KeyGlobalSearchTables, value); } }
         public static bool GlobalSearchFields       { get { return GetBool(KeyGlobalSearchFields,       true); } set { SetBool(KeyGlobalSearchFields, value); } }
