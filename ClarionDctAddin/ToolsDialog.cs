@@ -100,11 +100,17 @@ namespace ClarionDctAddin
             body.Controls.Add(MakeSection("Search & navigation", new[]
             {
                 new ToolDef { Name = "Global search",
-                              Description = "Ctrl-F across tables, fields, keys, relations, triggers. Results jump straight to the item." },
+                              Description = "Ctrl-F across tables, fields, keys, relations, triggers. Case-insensitive or regex, with per-kind filters.",
+                              Implemented = true,
+                              OnClick = delegate { OpenGlobalSearch(); } },
                 new ToolDef { Name = "Where used",
-                              Description = "Pick a field — see every key, relation, and trigger that references it." },
+                              Description = "Pick a field — see every key, relation, and trigger body that references it.",
+                              Implemented = true,
+                              OnClick = delegate { OpenWhereUsed(); } },
                 new ToolDef { Name = "Path finder",
-                              Description = "\"How is CLIENTES related to INVOICES?\" BFS through relations for the shortest path." },
+                              Description = "\"How is CLIENTES related to INVOICES?\" BFS through relations for the shortest path.",
+                              Implemented = true,
+                              OnClick = delegate { OpenPathFinder(); } },
             }));
 
             body.Controls.Add(MakeSection("Compare & diff", new[]
@@ -126,9 +132,13 @@ namespace ClarionDctAddin
                               Implemented = true,
                               OnClick = delegate { OpenSqlDdl(); } },
                 new ToolDef { Name = "Model classes (C#)",
-                              Description = "Emit a C# class per table with properties typed from Clarion types. API-ready POCOs." },
+                              Description = "Emit a C# class per table with properties typed from Clarion types. API-ready POCOs.",
+                              Implemented = true,
+                              OnClick = delegate { OpenModelClasses("csharp"); } },
                 new ToolDef { Name = "Model classes (TypeScript)",
-                              Description = "Same idea, TypeScript interfaces — usable from front-end code and OpenAPI generation." },
+                              Description = "Same idea, TypeScript interfaces — usable from front-end code and OpenAPI generation.",
+                              Implemented = true,
+                              OnClick = delegate { OpenModelClasses("typescript"); } },
                 new ToolDef { Name = "Markdown documentation",
                               Description = "Full dictionary reference as a single Markdown document — tables, fields, keys, relations. Copy or save to .md.",
                               Implemented = true,
@@ -291,6 +301,34 @@ namespace ClarionDctAddin
         {
             Hide();
             using (var dlg = new CompareDictionariesDialog(dict)) dlg.ShowDialog(this);
+            Show();
+        }
+
+        void OpenGlobalSearch()
+        {
+            Hide();
+            using (var dlg = new GlobalSearchDialog(dict)) dlg.ShowDialog(this);
+            Show();
+        }
+
+        void OpenWhereUsed()
+        {
+            Hide();
+            using (var dlg = new WhereUsedDialog(dict)) dlg.ShowDialog(this);
+            Show();
+        }
+
+        void OpenPathFinder()
+        {
+            Hide();
+            using (var dlg = new PathFinderDialog(dict)) dlg.ShowDialog(this);
+            Show();
+        }
+
+        void OpenModelClasses(string language)
+        {
+            Hide();
+            using (var dlg = new ModelClassesDialog(dict, language)) dlg.ShowDialog(this);
             Show();
         }
     }

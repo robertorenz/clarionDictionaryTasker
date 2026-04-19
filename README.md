@@ -23,12 +23,18 @@ A SharpDevelop add-in for the **Clarion 12 IDE** that inspects the currently ope
 - **Dead tables** — tables with no relations and no references elsewhere.
 - **Duplicate fields** — fields with identical label + type + size appearing on many tables — candidates for extraction.
 
+### Search & navigation
+- **Global search** — Ctrl-F across tables, fields, keys, relations, and trigger bodies. Case-insensitive or regex, per-kind filters.
+- **Where used** — pick a field on a table → list every key component, relation component, and trigger body that references it.
+- **Path finder** — BFS the relation graph to show the shortest undirected path between any two tables, annotated with the relation name at each hop.
+
 ### Compare & diff
 - **Compare tables** — pick two tables in the current dict, diff their fields + keys side-by-side (Same / Differs / Only-A / Only-B).
 - **Compare dictionaries** — save a `*.tasker-snap` snapshot of the current dict, later load it and compare against the live dict (or a completely different dict). Tree view of Added / Removed / Changed tables with field-, key-, and relation-level drill-down. Exportable as Markdown.
 
 ### Generation & export
 - **SQL DDL export** — live preview window, 5 dialects (SQL Server, PostgreSQL, SQLite, MySQL, MariaDB). Whole dictionary or single table. Remembers the preferred dialect.
+- **Model classes** — emit one class/interface per table in **C#** (PascalCase POCOs with XML doc comments) or **TypeScript** (camelCase `export interface`s with JSDoc). Live preview, namespace option, Copy/Save.
 - **Markdown documentation** — single-document reference (tables, fields, keys, relations) with optional TOC. Copy or save as `.md`.
 - **JSON export** — one table, selected tables, or the whole dictionary.
 
@@ -105,6 +111,10 @@ User preferences (e.g. preferred SQL dialect) live in:
 | `HealthDashboardDialog.cs` | Stats / charts. |
 | `DeadTablesDialog.cs` | Tables with no relations. |
 | `DuplicateFieldsDialog.cs` | Fields appearing on multiple tables. |
+| `GlobalSearchDialog.cs` | Full-dict search across tables/fields/keys/relations/triggers. |
+| `WhereUsedDialog.cs` | Find every key / relation / trigger that references a given field. |
+| `PathFinderDialog.cs` | Shortest relation path between two tables. |
+| `ModelClassesDialog.cs` / `ModelClassesGenerator.cs` | C# + TypeScript model emitter. |
 | `CompareTablesDialog.cs` | Side-by-side diff of two tables in one dict. |
 | `CompareDictionariesDialog.cs` | Live dict vs. `.tasker-snap` snapshot diff + Markdown export. |
 | `DictSnapshot.cs` | Capture + save/load of a dict's structural shape. |
