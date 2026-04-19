@@ -49,11 +49,16 @@ namespace ClarionDctAddin
             };
 
             var rules = new Panel { Dock = DockStyle.Top, Height = 60, BackColor = BgColor, Padding = new Padding(16, 10, 16, 6) };
-            chkTblUpper        = MakeCheck("Tables UPPERCASE",                 0,   6, true);
-            chkPrefix          = MakeCheck("Prefixes 2-4 uppercase chars",     200, 6, true);
-            chkLblNoSpace      = MakeCheck("Field labels have no whitespace",  440, 6, true);
-            chkLblNoDigitStart = MakeCheck("Field labels don't start w/ digit",680, 6, true);
-            chkKeyConvention   = MakeCheck("Key names include :PK / :BY / KEY",0,  32, true);
+            chkTblUpper        = MakeCheck("Tables UPPERCASE",                 0,   6, Settings.NamingTblUpper);
+            chkPrefix          = MakeCheck("Prefixes 2-4 uppercase chars",     200, 6, Settings.NamingPrefix);
+            chkLblNoSpace      = MakeCheck("Field labels have no whitespace",  440, 6, Settings.NamingLblNoSpace);
+            chkLblNoDigitStart = MakeCheck("Field labels don't start w/ digit",680, 6, Settings.NamingLblNoDigitStart);
+            chkKeyConvention   = MakeCheck("Key names include :PK / :BY / KEY",0,  32, Settings.NamingKeyConvention);
+            chkTblUpper.CheckedChanged        += delegate { Settings.NamingTblUpper        = chkTblUpper.Checked; };
+            chkPrefix.CheckedChanged          += delegate { Settings.NamingPrefix          = chkPrefix.Checked; };
+            chkLblNoSpace.CheckedChanged      += delegate { Settings.NamingLblNoSpace      = chkLblNoSpace.Checked; };
+            chkLblNoDigitStart.CheckedChanged += delegate { Settings.NamingLblNoDigitStart = chkLblNoDigitStart.Checked; };
+            chkKeyConvention.CheckedChanged   += delegate { Settings.NamingKeyConvention   = chkKeyConvention.Checked; };
             rules.Controls.Add(chkTblUpper);
             rules.Controls.Add(chkPrefix);
             rules.Controls.Add(chkLblNoSpace);

@@ -46,7 +46,10 @@ namespace ClarionDctAddin
             this.suggestedFileName = suggestedFileName ?? "export.json";
             this.initialDir = initialDir;
             BuildUi();
-            ApplyStyle(Style.Tree);
+            var saved = Settings.JsonPreviewStyle;
+            var initial = Style.Tree;
+            if (saved >= 0 && saved <= (int)Style.Table) initial = (Style)saved;
+            ApplyStyle(initial);
         }
 
         void BuildUi()
@@ -170,6 +173,7 @@ namespace ClarionDctAddin
         void ApplyStyle(Style style)
         {
             currentStyle = style;
+            Settings.JsonPreviewStyle = (int)style;
             Cursor = Cursors.WaitCursor;
             try
             {

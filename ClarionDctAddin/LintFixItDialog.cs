@@ -99,7 +99,9 @@ namespace ClarionDctAddin
             cbDescStyle.Items.Add("Column heading    (copy DDField.ColumnHeading)");
             cbDescStyle.Items.Add("Prompt text       (copy DDField.PromptText)");
             cbDescStyle.Items.Add("Label verbatim    (copy the label as-is)");
-            cbDescStyle.SelectedIndex = 0;
+            var savedStyle = Settings.FixFieldsDescStyle;
+            cbDescStyle.SelectedIndex = (savedStyle >= 0 && savedStyle < cbDescStyle.Items.Count) ? savedStyle : 0;
+            cbDescStyle.SelectedIndexChanged += delegate { Settings.FixFieldsDescStyle = cbDescStyle.SelectedIndex; };
             btnAutoBlank = new Button { Text = "Fill blanks", Left = 490, Top = 2, Width = 110, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoBlank.Click += delegate { AutoFillDescriptions(onlyBlanks: true); };
             btnAutoAll = new Button { Text = "Fill all (overwrite)", Left = 606, Top = 2, Width = 160, Height = 30, FlatStyle = FlatStyle.System };

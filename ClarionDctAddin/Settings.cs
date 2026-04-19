@@ -15,6 +15,30 @@ namespace ClarionDctAddin
         const string KeyFixKeysKey       = "fix_keys_key";
         const string KeyFixKeysShow      = "fix_keys_show";
 
+        const string KeyFixFieldsDescStyle = "fix_fields_desc_style";
+        const string KeyJsonPreviewStyle   = "json_preview_style";
+
+        const string KeyTableListSortColumn = "tablelist_sort_col";
+        const string KeyTableListSortAsc    = "tablelist_sort_asc";
+
+        const string KeyModelLanguage        = "model_language";
+        const string KeyModelNamespace       = "model_namespace";
+        const string KeyModelIncludeDescs    = "model_include_descs";
+
+        const string KeyNamingTblUpper         = "naming_tbl_upper";
+        const string KeyNamingPrefix           = "naming_prefix";
+        const string KeyNamingLblNoSpace       = "naming_lbl_no_space";
+        const string KeyNamingLblNoDigitStart  = "naming_lbl_no_digit_start";
+        const string KeyNamingKeyConvention    = "naming_key_convention";
+
+        const string KeyGlobalSearchRegex      = "global_search_regex";
+        const string KeyGlobalSearchTables     = "global_search_tables";
+        const string KeyGlobalSearchFields     = "global_search_fields";
+        const string KeyGlobalSearchKeys       = "global_search_keys";
+        const string KeyGlobalSearchRelations  = "global_search_relations";
+        const string KeyGlobalSearchTriggers   = "global_search_triggers";
+        const string KeyGlobalSearchDescriptions = "global_search_descriptions";
+
         static readonly string DataDir =
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -86,6 +110,43 @@ namespace ClarionDctAddin
         public static int FixKeysOwner { get { return GetInt(KeyFixKeysOwner, 0); } set { SetInt(KeyFixKeysOwner, value); } }
         public static int FixKeysKey   { get { return GetInt(KeyFixKeysKey,   0); } set { SetInt(KeyFixKeysKey,   value); } }
         public static int FixKeysShow  { get { return GetInt(KeyFixKeysShow,  0); } set { SetInt(KeyFixKeysShow,  value); } }
+
+        public static bool GetBool(string key, bool fallback)
+        {
+            var v = Get(key, "");
+            if (string.IsNullOrEmpty(v)) return fallback;
+            return string.Equals(v, "1", StringComparison.Ordinal)
+                || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(v, "yes",  StringComparison.OrdinalIgnoreCase);
+        }
+        public static void SetBool(string key, bool value)
+        {
+            Set(key, value ? "1" : "0");
+        }
+
+        public static int FixFieldsDescStyle { get { return GetInt(KeyFixFieldsDescStyle, 0); } set { SetInt(KeyFixFieldsDescStyle, value); } }
+        public static int JsonPreviewStyle   { get { return GetInt(KeyJsonPreviewStyle,   4); } set { SetInt(KeyJsonPreviewStyle,   value); } } // 4 = Tree
+
+        public static int  TableListSortColumn { get { return GetInt(KeyTableListSortColumn, 0); } set { SetInt(KeyTableListSortColumn, value); } }
+        public static bool TableListSortAsc    { get { return GetBool(KeyTableListSortAsc,  true); } set { SetBool(KeyTableListSortAsc, value); } }
+
+        public static int    ModelLanguage    { get { return GetInt(KeyModelLanguage, 0); } set { SetInt(KeyModelLanguage, value); } }
+        public static string ModelNamespace   { get { return Get(KeyModelNamespace, "ClarionModels"); } set { Set(KeyModelNamespace, value ?? ""); } }
+        public static bool   ModelIncludeDescriptions { get { return GetBool(KeyModelIncludeDescs, true); } set { SetBool(KeyModelIncludeDescs, value); } }
+
+        public static bool NamingTblUpper         { get { return GetBool(KeyNamingTblUpper,         true); } set { SetBool(KeyNamingTblUpper, value); } }
+        public static bool NamingPrefix           { get { return GetBool(KeyNamingPrefix,           true); } set { SetBool(KeyNamingPrefix, value); } }
+        public static bool NamingLblNoSpace       { get { return GetBool(KeyNamingLblNoSpace,       true); } set { SetBool(KeyNamingLblNoSpace, value); } }
+        public static bool NamingLblNoDigitStart  { get { return GetBool(KeyNamingLblNoDigitStart,  true); } set { SetBool(KeyNamingLblNoDigitStart, value); } }
+        public static bool NamingKeyConvention    { get { return GetBool(KeyNamingKeyConvention,    true); } set { SetBool(KeyNamingKeyConvention, value); } }
+
+        public static bool GlobalSearchRegex        { get { return GetBool(KeyGlobalSearchRegex,        false); } set { SetBool(KeyGlobalSearchRegex, value); } }
+        public static bool GlobalSearchTables       { get { return GetBool(KeyGlobalSearchTables,       true); } set { SetBool(KeyGlobalSearchTables, value); } }
+        public static bool GlobalSearchFields       { get { return GetBool(KeyGlobalSearchFields,       true); } set { SetBool(KeyGlobalSearchFields, value); } }
+        public static bool GlobalSearchKeys         { get { return GetBool(KeyGlobalSearchKeys,         true); } set { SetBool(KeyGlobalSearchKeys, value); } }
+        public static bool GlobalSearchRelations    { get { return GetBool(KeyGlobalSearchRelations,    true); } set { SetBool(KeyGlobalSearchRelations, value); } }
+        public static bool GlobalSearchTriggers     { get { return GetBool(KeyGlobalSearchTriggers,     true); } set { SetBool(KeyGlobalSearchTriggers, value); } }
+        public static bool GlobalSearchDescriptions { get { return GetBool(KeyGlobalSearchDescriptions, true); } set { SetBool(KeyGlobalSearchDescriptions, value); } }
 
         public static SqlDdlGenerator.Dialect PreferredDialect
         {

@@ -57,10 +57,14 @@ namespace ClarionDctAddin
             cbLanguage = new ComboBox { Left = 72, Top = 6, Width = 140, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
             cbLanguage.Items.Add("C#");
             cbLanguage.Items.Add("TypeScript");
-            cbLanguage.SelectedIndex = initialLanguage == "typescript" ? 1 : 0;
+            // Language preference: explicit caller arg beats the persisted value.
+            cbLanguage.SelectedIndex = initialLanguage == "typescript" ? 1
+                : initialLanguage == "csharp" ? 0
+                : (Settings.ModelLanguage >= 0 && Settings.ModelLanguage < cbLanguage.Items.Count
+                    ? Settings.ModelLanguage : 0);
             var lblNs = new Label { Text = "Namespace:", Left = 232, Top = 10, Width = 80, Font = new Font("Segoe UI", 9F) };
-            txtNamespace = new TextBox { Left = 314, Top = 6, Width = 240, Text = "ClarionModels", Font = new Font("Segoe UI", 9F) };
-            chkDescriptions = new CheckBox { Text = "Include descriptions", Left = 574, Top = 8, AutoSize = true, Checked = true, Font = new Font("Segoe UI", 9F) };
+            txtNamespace = new TextBox { Left = 314, Top = 6, Width = 240, Text = Settings.ModelNamespace ?? "ClarionModels", Font = new Font("Segoe UI", 9F) };
+            chkDescriptions = new CheckBox { Text = "Include descriptions", Left = 574, Top = 8, AutoSize = true, Checked = Settings.ModelIncludeDescriptions, Font = new Font("Segoe UI", 9F) };
             toolbar.Controls.Add(lblLang);
             toolbar.Controls.Add(cbLanguage);
             toolbar.Controls.Add(lblNs);
@@ -92,9 +96,24 @@ namespace ClarionDctAddin
             Controls.Add(header);
             CancelButton = btnClose;
 
-            cbLanguage.SelectedIndexChanged += delegate { if (!inSetup) Regenerate(); };
-            txtNamespace.TextChanged        += delegate { if (!inSetup) Regenerate(); };
-            chkDescriptions.CheckedChanged  += delegate { if (!inSetup) Regenerate(); };
+            cbLanguage.SelectedIndexChanged += delegate
+            {
+                if (inSetup) return;
+                Settings.ModelLanguage = cbLanguage.SelectedIndex;
+                Regenerate();
+            };
+            txtNamespace.TextChanged        += delegate
+            {
+                if (inSetup) return;
+                Settings.ModelNamespace = txtNamespace.Text ?? "";
+                Regenerate();
+            };
+            chkDescriptions.CheckedChanged  += delegate
+            {
+                if (inSetup) return;
+                Settings.ModelIncludeDescriptions = chkDescriptions.Checked;
+                Regenerate();
+            };
         }
 
         void Regenerate()

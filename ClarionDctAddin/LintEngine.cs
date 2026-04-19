@@ -65,10 +65,16 @@ namespace ClarionDctAddin
         static void RunTableChecks(object table, List<Finding> f)
         {
             var tName = DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "<?>";
+            var driver = DictModel.AsString(DictModel.GetProp(table, "FileDriverName")) ?? "";
 
             int fieldCount = DictModel.CountEnumerable(table, "Fields");
             int keyCount   = DictModel.CountEnumerable(table, "Keys");
             int relCount   = DictModel.CountEnumerable(table, "Relations");
+
+            // Table's own external / physical name — FullPathName carries the
+            // schema-qualified SQL identifier for SQL drivers.
+            var tableExt = DictModel.AsString(DictModel.GetProp(table, "FullPathName")) ?? "";
+            CheckExternalNameShape(f, tName, "table", tableExt, driver);
 
             if (fieldCount == 0)
                 f.Add(new Finding { Severity = Severity.Error,   Target = tName, Rule = "empty-table",
@@ -134,6 +140,8 @@ namespace ClarionDctAddin
                     if (string.IsNullOrEmpty(extName))
                         f.Add(new Finding { Severity = Severity.Info, Target = target, Rule = "empty-external-name",
                                             Message = "Key has no ExternalName — SQL drivers usually require one." });
+                    else
+                        CheckExternalNameShape(f, target, "key", extName, driver);
                 }
             }
 
@@ -166,8 +174,87 @@ namespace ClarionDctAddin
                     if (label.Contains(" "))
                         f.Add(new Finding { Severity = Severity.Warning, Target = target, Rule = "whitespace-in-label",
                                             Message = "Field label contains whitespace — most generators reject this." });
+
+                    var fldExt = DictModel.AsString(DictModel.GetProp(fld, "ExternalName")) ?? "";
+                    if (!string.IsNullOrEmpty(fldExt))
+                        CheckExternalNameShape(f, target, "field", fldExt, driver);
                 }
             }
+        }
+
+        // Driver-aware sanity check on an ExternalName. Catches the Clarion
+        // prefix leak (BIT:guidkey landing in the index name as "BIT:GUIDKEY"),
+        // whitespace, leading digit, unusual characters for a bare SQL identifier,
+        // and length limits that differ across drivers. Mirrored by the live
+        // checker in LintFixKeysDialog so the two grids agree.
+        static void CheckExternalNameShape(List<Finding> f, string target, string kind, string ext, string driver)
+        {
+            if (string.IsNullOrWhiteSpace(ext)) return;
+
+            // Clarion field-prefix leak — colons have no legal unquoted place in
+            // any of the SQL dialects we generate for. MSSQL in particular refuses
+            // to parse them even inside brackets.
+            if (ext.IndexOf(':') >= 0)
+                f.Add(new Finding
+                {
+                    Severity = Severity.Error, Target = target, Rule = "illegal-external-name",
+                    Message = kind + " ExternalName '" + ext + "' contains ':' — will break every SQL driver (MSSQL / Postgres / MySQL / MariaDB)."
+                });
+
+            // Whitespace inside a bare identifier — would need quoting on every
+            // statement; very few code generators do that reliably.
+            bool hasWs = false;
+            foreach (var c in ext) { if (char.IsWhiteSpace(c)) { hasWs = true; break; } }
+            if (hasWs)
+                f.Add(new Finding
+                {
+                    Severity = Severity.Error, Target = target, Rule = "illegal-external-name",
+                    Message = kind + " ExternalName '" + ext + "' contains whitespace — won't work as a bare SQL identifier."
+                });
+
+            if (ext.Length > 0 && char.IsDigit(ext[0]))
+                f.Add(new Finding
+                {
+                    Severity = Severity.Warning, Target = target, Rule = "illegal-external-name",
+                    Message = kind + " ExternalName '" + ext + "' starts with a digit — most SQL parsers reject this without quoting."
+                });
+
+            if (!LooksLikeSafeSqlIdentifier(ext))
+                f.Add(new Finding
+                {
+                    Severity = Severity.Warning, Target = target, Rule = "unusual-external-name-chars",
+                    Message = kind + " ExternalName '" + ext + "' contains characters outside [A-Za-z0-9_$#] — may need quoting on every statement."
+                });
+
+            int limit = SqlIdentifierLengthLimit(driver);
+            if (ext.Length > limit)
+                f.Add(new Finding
+                {
+                    Severity = Severity.Warning, Target = target, Rule = "long-external-name",
+                    Message = kind + " ExternalName is " + ext.Length + " chars, exceeds " + driver + "'s identifier length limit of " + limit + "."
+                });
+        }
+
+        static bool LooksLikeSafeSqlIdentifier(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                var c = s[i];
+                bool ok = char.IsLetterOrDigit(c) || c == '_' || c == '$' || c == '#' || c == '.';
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        static int SqlIdentifierLengthLimit(string driver)
+        {
+            var d = (driver ?? "").ToUpperInvariant();
+            if (d.Contains("POSTGRES")) return 63;
+            if (d.Contains("MYSQL") || d.Contains("MARIADB")) return 64;
+            if (d.Contains("MSSQL") || d.Contains("SQLSERVER")) return 128;
+            if (d.Contains("SQLITE")) return 128;
+            return 64; // safe default for non-SQL drivers (TopSpeed etc. don't care, but cap anyway)
         }
 
         // Verify that the picture string matches the category of the data type.

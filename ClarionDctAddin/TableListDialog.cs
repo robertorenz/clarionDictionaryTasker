@@ -121,7 +121,9 @@ namespace ClarionDctAddin
             lv.Columns.Add("Keys", 55, HorizontalAlignment.Right);
             lv.Columns.Add("Description", 440);
             lv.DoubleClick += delegate { ShowFieldsForSelection(); };
-            sorter = new TableSorter { Column = 0, Ascending = true };
+            var savedCol = Settings.TableListSortColumn;
+            if (savedCol < 0) savedCol = 0;
+            sorter = new TableSorter { Column = savedCol, Ascending = Settings.TableListSortAsc };
             lv.ListViewItemSorter = sorter;
             lv.ColumnClick += OnColumnClick;
 
@@ -239,6 +241,7 @@ namespace ClarionDctAddin
                 lv.Sort();
                 if (lv.Items.Count > 0) lv.Items[0].Selected = true;
                 lblCount.Text = shown + " of " + allItems.Count + " tables";
+                PaintSortHeader();
             }
             finally { lv.EndUpdate(); }
         }
@@ -259,7 +262,14 @@ namespace ClarionDctAddin
         {
             if (sorter.Column == e.Column) sorter.Ascending = !sorter.Ascending;
             else { sorter.Column = e.Column; sorter.Ascending = true; }
+            Settings.TableListSortColumn = sorter.Column;
+            Settings.TableListSortAsc    = sorter.Ascending;
             lv.Sort();
+            PaintSortHeader();
+        }
+
+        void PaintSortHeader()
+        {
             // Paint a small arrow on the sorted column header by rewriting its text.
             for (int i = 0; i < lv.Columns.Count; i++)
             {
