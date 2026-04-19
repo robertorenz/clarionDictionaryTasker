@@ -16,18 +16,24 @@ namespace ClarionDctAddin
         static readonly Color MutedColor  = Color.FromArgb(100, 115, 135);
 
         readonly string title;
-        readonly string json;
+        readonly string originalJson;    // what the exporter handed us; reformats are done from this
         readonly string suggestedFileName;
         readonly string initialDir;
         TextBox txtOutput;
+        Label   stats;
+        Button  btnPretty2, btnPretty4, btnTabs, btnMinified;
+
+        enum Style { Pretty2, Pretty4, Tabs, Minified }
+        Style currentStyle = Style.Pretty2;
 
         public JsonPreviewDialog(string title, string json, string suggestedFileName, string initialDir)
         {
             this.title = title ?? "JSON export";
-            this.json = json ?? "";
+            this.originalJson = json ?? "";
             this.suggestedFileName = suggestedFileName ?? "export.json";
             this.initialDir = initialDir;
             BuildUi();
+            ApplyStyle(Style.Pretty2);
         }
 
         void BuildUi()
@@ -52,13 +58,25 @@ namespace ClarionDctAddin
                 Text = title
             };
 
-            var stats = new Label
+            var toolbar = new Panel { Dock = DockStyle.Top, Height = 42, BackColor = BgColor, Padding = new Padding(16, 8, 16, 4) };
+            var lblStyle = new Label { Text = "Style:", Left = 0, Top = 10, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            btnPretty2  = StyleButton("Pretty (2 sp)",  Style.Pretty2,  50);
+            btnPretty4  = StyleButton("Pretty (4 sp)",  Style.Pretty4,  168);
+            btnTabs     = StyleButton("Tabs",           Style.Tabs,     286);
+            btnMinified = StyleButton("Minified",       Style.Minified, 376);
+            toolbar.Controls.Add(lblStyle);
+            toolbar.Controls.Add(btnPretty2);
+            toolbar.Controls.Add(btnPretty4);
+            toolbar.Controls.Add(btnTabs);
+            toolbar.Controls.Add(btnMinified);
+
+            stats = new Label
             {
                 Dock = DockStyle.Top, Height = 26,
                 Font = new Font("Segoe UI", 9F),
                 ForeColor = MutedColor,
                 Padding = new Padding(18, 6, 0, 0),
-                Text = FormatStats(json)
+                Text = ""
             };
 
             txtOutput = new TextBox
@@ -66,11 +84,8 @@ namespace ClarionDctAddin
                 Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
                 ScrollBars = ScrollBars.Both, WordWrap = false,
                 Font = new Font("Consolas", 9.5F),
-                BackColor = Color.White,
-                Text = json
+                BackColor = Color.White
             };
-            txtOutput.SelectionStart = 0;
-            txtOutput.SelectionLength = 0;
 
             var bottom = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = PanelColor, Padding = new Padding(16, 10, 16, 10) };
             var btnClose = new Button { Text = "Close", Width = 120, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
@@ -86,8 +101,69 @@ namespace ClarionDctAddin
             Controls.Add(txtOutput);
             Controls.Add(bottom);
             Controls.Add(stats);
+            Controls.Add(toolbar);
             Controls.Add(header);
             CancelButton = btnClose;
+        }
+
+        Button StyleButton(string text, Style style, int left)
+        {
+            var b = new Button
+            {
+                Text = text, Left = left, Top = 4, Width = 110, Height = 28,
+                FlatStyle = FlatStyle.System, Font = new Font("Segoe UI", 9F)
+            };
+            b.Click += delegate { ApplyStyle(style); };
+            return b;
+        }
+
+        void ApplyStyle(Style style)
+        {
+            currentStyle = style;
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                string formatted;
+                switch (style)
+                {
+                    case Style.Pretty2:  formatted = JsonFormatter.Pretty(originalJson, "  "); break;
+                    case Style.Pretty4:  formatted = JsonFormatter.Pretty(originalJson, "    "); break;
+                    case Style.Tabs:     formatted = JsonFormatter.Pretty(originalJson, "\t"); break;
+                    case Style.Minified: formatted = JsonFormatter.Minified(originalJson); break;
+                    default:             formatted = originalJson; break;
+                }
+                txtOutput.Text = formatted;
+                txtOutput.SelectionStart = 0;
+                txtOutput.SelectionLength = 0;
+                stats.Text = FormatStats(formatted) + "   ·   style: " + StyleLabel(style);
+                HighlightActive();
+            }
+            finally { Cursor = Cursors.Default; }
+        }
+
+        static string StyleLabel(Style s)
+        {
+            switch (s)
+            {
+                case Style.Pretty2:  return "pretty, 2-space indent";
+                case Style.Pretty4:  return "pretty, 4-space indent";
+                case Style.Tabs:     return "pretty, tab indent";
+                case Style.Minified: return "minified (single line)";
+                default:             return "?";
+            }
+        }
+
+        void HighlightActive()
+        {
+            SetActive(btnPretty2,  currentStyle == Style.Pretty2);
+            SetActive(btnPretty4,  currentStyle == Style.Pretty4);
+            SetActive(btnTabs,     currentStyle == Style.Tabs);
+            SetActive(btnMinified, currentStyle == Style.Minified);
+        }
+
+        static void SetActive(Button b, bool active)
+        {
+            b.Font = new Font("Segoe UI", 9F, active ? FontStyle.Bold : FontStyle.Regular);
         }
 
         static string FormatStats(string json)
