@@ -27,8 +27,11 @@ namespace ClarionDctAddin
         DataGridView grid;
         Label        lblSummary;
         Button       btnApply, btnRefresh, btnAutoBlank, btnAutoAll;
-        ComboBox     cbStyle;
+        ComboBox     cbStyle, cbShow;
         List<Row>    rows = new List<Row>();
+        Dictionary<string, List<string>> otherOwners;   // ExternalName -> owners NOT in scope
+
+        enum ShowFilter { All, BlankOnly, DuplicatesOnly }
 
         enum NamingStyle
         {
@@ -50,12 +53,15 @@ namespace ClarionDctAddin
             public string OrigExternalName;
             public string ExternalName;
             public string Issues;
+            public bool   IsBlank;        // ExternalName empty after edits
+            public bool   IsDuplicated;   // collides with another key's ExternalName
 
             public bool DirtyExternalName
             {
                 get { return !string.Equals(ExternalName ?? "", OrigExternalName ?? "", StringComparison.Ordinal); }
             }
             public bool Dirty { get { return DirtyExternalName; } }
+            public string Owner { get { return (Table ?? "") + "." + (Name ?? ""); } }
         }
 
         public LintFixKeysDialog(object dict) : this(dict, null) { }
@@ -115,6 +121,17 @@ namespace ClarionDctAddin
             autoBar.Controls.Add(btnAutoBlank);
             autoBar.Controls.Add(btnAutoAll);
 
+            var filterBar = new Panel { Dock = DockStyle.Top, Height = 38, BackColor = BgColor, Padding = new Padding(16, 6, 16, 4) };
+            var lblShow = new Label { Text = "Show:", Left = 0, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            cbShow = new ComboBox { Left = 50, Top = 4, Width = 240, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
+            cbShow.Items.Add("All issues");
+            cbShow.Items.Add("Blank ExternalName only");
+            cbShow.Items.Add("Duplicated ExternalName only");
+            cbShow.SelectedIndex = 0;
+            cbShow.SelectedIndexChanged += delegate { RenderGrid(); };
+            filterBar.Controls.Add(lblShow);
+            filterBar.Controls.Add(cbShow);
+
             lblSummary = new Label
             {
                 Dock = DockStyle.Top, Height = 26,
@@ -164,6 +181,7 @@ namespace ClarionDctAddin
             Controls.Add(grid);
             Controls.Add(bottom);
             Controls.Add(lblSummary);
+            Controls.Add(filterBar);
             Controls.Add(autoBar);
             Controls.Add(header);
             CancelButton = btnClose;
@@ -173,22 +191,18 @@ namespace ClarionDctAddin
         {
             var style = (NamingStyle)cbStyle.SelectedIndex;
             int touched = 0;
-            for (int i = 0; i < grid.Rows.Count; i++)
+            // Iterate the full rows list so offscreen rows (filtered out of the
+            // grid right now) still get auto-filled.
+            foreach (var r in rows)
             {
-                var gRow = grid.Rows[i];
-                var r = gRow.Tag as Row;
-                if (r == null) continue;
                 if (onlyBlanks && !string.IsNullOrWhiteSpace(r.ExternalName)) continue;
                 var suggested = MakeName(style, r.Table, r.Name);
                 if (string.Equals(suggested, r.ExternalName, StringComparison.Ordinal)) continue;
                 r.ExternalName = suggested;
-                gRow.Cells["ExternalName"].Value = suggested;
-                r.Issues = BuildIssues(r);
-                gRow.Cells["Issues"].Value = r.Issues;
-                PaintRow(gRow, r);
                 touched++;
             }
-            UpdateSummary();
+            RecomputeIssuesForAllRows();
+            RenderGrid();
             if (touched == 0)
                 MessageBox.Show(this, onlyBlanks
                     ? "No blank ExternalNames to fill."
@@ -262,9 +276,18 @@ namespace ClarionDctAddin
         void Populate()
         {
             rows = Collect();
+            RenderGrid();
+        }
+
+        void RenderGrid()
+        {
+            RecomputeIssuesForAllRows();
+            var filter = (ShowFilter)cbShow.SelectedIndex;
             grid.Rows.Clear();
             foreach (var r in rows)
             {
+                if (filter == ShowFilter.BlankOnly      && !r.IsBlank)      continue;
+                if (filter == ShowFilter.DuplicatesOnly && !r.IsDuplicated) continue;
                 var idx = grid.Rows.Add(r.Table, r.Name, r.KeyType, r.Components, r.Unique, r.Primary, r.ExternalName, r.Issues);
                 grid.Rows[idx].Tag = r;
                 PaintRow(grid.Rows[idx], r);
@@ -280,13 +303,20 @@ namespace ClarionDctAddin
             if (r == null) return;
             var colName = grid.Columns[colIdx].Name;
             var v = gRow.Cells[colIdx].Value as string ?? "";
-            if (colName == "ExternalName")
+            if (colName == "ExternalName") r.ExternalName = v;
+
+            // Editing one ExternalName can change duplicate status for other rows
+            // too (e.g. fixing a collision clears flags on both sides), so recompute
+            // the whole grid rather than just this row.
+            RecomputeIssuesForAllRows();
+            for (int i = 0; i < grid.Rows.Count; i++)
             {
-                r.ExternalName = v;
+                var gr = grid.Rows[i];
+                var row = gr.Tag as Row;
+                if (row == null) continue;
+                gr.Cells["Issues"].Value = row.Issues;
+                PaintRow(gr, row);
             }
-            r.Issues = BuildIssues(r);
-            gRow.Cells["Issues"].Value = r.Issues;
-            PaintRow(gRow, r);
             UpdateSummary();
         }
 
@@ -298,8 +328,12 @@ namespace ClarionDctAddin
         void UpdateSummary()
         {
             int dirty = rows.Count(r => r.Dirty);
+            int blank = rows.Count(r => r.IsBlank);
+            int dup   = rows.Count(r => r.IsDuplicated);
             int outstanding = rows.Count(r => !string.IsNullOrEmpty(r.Issues));
             lblSummary.Text = rows.Count + " key(s) flagged"
+                + "   ·   blank: " + blank
+                + "   ·   duplicated: " + dup
                 + "   ·   " + dirty + " edited"
                 + "   ·   " + outstanding + " still have outstanding issues";
             btnApply.Enabled = dirty > 0;
@@ -308,19 +342,47 @@ namespace ClarionDctAddin
         List<Row> Collect()
         {
             var list = new List<Row>();
-            IEnumerable<object> tables;
-            if (singleTable != null) tables = new[] { singleTable };
-            else tables = DictModel.GetTables(dict);
 
-            foreach (var t in tables)
+            // Which tables are in-scope (just the user-selected one, or all of them
+            // when the dialog was launched dict-wide). We need this so we know which
+            // keys get editable rows vs. which are "external" context for duplicate
+            // detection only.
+            var scoped = new HashSet<object>();
+            if (singleTable != null) scoped.Add(singleTable);
+            else foreach (var t in DictModel.GetTables(dict)) scoped.Add(t);
+
+            // Snapshot every OUT-OF-SCOPE key's ExternalName so we can diff the
+            // in-scope keys against them. Stays constant while the dialog is open
+            // (we don't edit them) and spares us a full dict walk on every cell edit.
+            otherOwners = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in DictModel.GetTables(dict))
+            {
+                if (scoped.Contains(t)) continue;
+                var tName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
+                var keys = DictModel.GetProp(t, "Keys") as IEnumerable;
+                if (keys == null) continue;
+                foreach (var k in keys)
+                {
+                    if (k == null) continue;
+                    var ext = DictModel.AsString(DictModel.GetProp(k, "ExternalName")) ?? "";
+                    if (string.IsNullOrWhiteSpace(ext)) continue;
+                    var kName = DictModel.AsString(DictModel.GetProp(k, "Name")) ?? "";
+                    if (string.IsNullOrEmpty(kName)) continue;
+                    List<string> bucket;
+                    if (!otherOwners.TryGetValue(ext, out bucket))
+                        otherOwners[ext] = bucket = new List<string>();
+                    bucket.Add(tName + "." + kName);
+                }
+            }
+
+            // Per-table component-signature dedup + candidate rows for in-scope tables.
+            foreach (var t in scoped)
             {
                 var tName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
                 var keys = DictModel.GetProp(t, "Keys") as IEnumerable;
                 if (keys == null) continue;
 
-                // Detect duplicate-component signatures within this table so we can flag them.
                 var sigs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
                 var snapshot = new List<Tuple<object, string, string>>();
                 foreach (var k in keys)
                 {
@@ -350,34 +412,79 @@ namespace ClarionDctAddin
                         OrigExternalName = DictModel.AsString(DictModel.GetProp(k, "ExternalName")) ?? "",
                     };
                     row.ExternalName = row.OrigExternalName;
-                    row.Issues = BuildIssuesFromSig(row, sigs, sig);
-                    if (string.IsNullOrEmpty(row.Issues)) continue;
+                    // Remember this row's in-table duplicate-sig prior (for recomputes).
+                    if (!string.IsNullOrEmpty(sig) && sigs.TryGetValue(sig, out string prior)
+                        && !string.Equals(prior, kName, StringComparison.OrdinalIgnoreCase))
+                        row.KeyType = row.KeyType + "*"; // sentinel (unused; just keeps context)
+
                     list.Add(row);
                 }
             }
-            return list.OrderBy(r => r.Table, StringComparer.OrdinalIgnoreCase)
+
+            // Filter to rows that actually have issues after the full cross-dict pass.
+            RecomputeIssuesFor(list);
+            return list.Where(r => !string.IsNullOrEmpty(r.Issues))
+                       .OrderBy(r => r.Table, StringComparer.OrdinalIgnoreCase)
                        .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                        .ToList();
         }
 
-        static string BuildIssues(Row r)
+        void RecomputeIssuesForAllRows()
         {
-            var issues = new List<string>();
-            if (string.IsNullOrWhiteSpace(r.ExternalName)) issues.Add("no ExternalName");
-            if (string.IsNullOrEmpty(r.Components))        issues.Add("no components");
-            return string.Join("; ", issues.ToArray());
+            RecomputeIssuesFor(rows);
         }
 
-        static string BuildIssuesFromSig(Row r, Dictionary<string, string> sigs, string sig)
+        // Reapply the three lint rules across the full row set using current
+        // (possibly edited) ExternalNames. IN-scope collisions are computed from
+        // the rows list; OUT-of-scope collisions come from the otherOwners snapshot.
+        void RecomputeIssuesFor(IList<Row> all)
         {
-            var issues = new List<string>();
-            if (string.IsNullOrWhiteSpace(r.ExternalName)) issues.Add("no ExternalName");
-            if (string.IsNullOrEmpty(sig))                  issues.Add("no components");
-            string prior;
-            if (!string.IsNullOrEmpty(sig) && sigs.TryGetValue(sig, out prior)
-                && !string.Equals(prior, r.Name, StringComparison.OrdinalIgnoreCase))
-                issues.Add("duplicates " + prior);
-            return string.Join("; ", issues.ToArray());
+            if (all == null) return;
+            if (otherOwners == null) otherOwners = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            // Build the "in-scope name -> owners" map from current edits.
+            var inScope = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in all)
+            {
+                if (string.IsNullOrWhiteSpace(r.ExternalName)) continue;
+                List<string> bucket;
+                if (!inScope.TryGetValue(r.ExternalName, out bucket))
+                    inScope[r.ExternalName] = bucket = new List<string>();
+                bucket.Add(r.Owner);
+            }
+
+            foreach (var r in all)
+            {
+                var issues = new List<string>();
+                r.IsBlank = string.IsNullOrWhiteSpace(r.ExternalName);
+                r.IsDuplicated = false;
+
+                if (r.IsBlank) issues.Add("no ExternalName");
+                if (string.IsNullOrEmpty(r.Components)) issues.Add("no components");
+
+                if (!r.IsBlank)
+                {
+                    var ext = r.ExternalName;
+                    var others = new List<string>();
+                    List<string> inScopeOwners;
+                    if (inScope.TryGetValue(ext, out inScopeOwners) && inScopeOwners.Count > 1)
+                    {
+                        foreach (var o in inScopeOwners)
+                            if (!string.Equals(o, r.Owner, StringComparison.OrdinalIgnoreCase)) others.Add(o);
+                    }
+                    List<string> extOwners;
+                    if (otherOwners.TryGetValue(ext, out extOwners))
+                        foreach (var o in extOwners) others.Add(o);
+
+                    if (others.Count > 0)
+                    {
+                        r.IsDuplicated = true;
+                        issues.Add("duplicates: " + string.Join(", ", others.ToArray()));
+                    }
+                }
+
+                r.Issues = string.Join("; ", issues.ToArray());
+            }
         }
 
         static string Yn(string v)
@@ -457,16 +564,8 @@ namespace ClarionDctAddin
                 "Fix keys",
                 MessageBoxButtons.OK, mr.Failed > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
 
-            for (int i = 0; i < grid.Rows.Count; i++)
-            {
-                var gRow = grid.Rows[i];
-                var refreshed = gRow.Tag as Row;
-                if (refreshed == null) continue;
-                refreshed.Issues = BuildIssues(refreshed);
-                gRow.Cells["Issues"].Value = refreshed.Issues;
-                PaintRow(gRow, refreshed);
-            }
-            UpdateSummary();
+            RecomputeIssuesForAllRows();
+            RenderGrid();
         }
     }
 }
