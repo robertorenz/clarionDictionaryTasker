@@ -35,13 +35,17 @@ namespace ClarionDctAddin
         void BuildUi()
         {
             Text = "Dictionary tools";
-            Width = 960;
-            Height = 700;
-            MinimumSize = new Size(780, 500);
+            Width = 1040;
+            Height = 760;
+            MinimumSize = new Size(720, 460);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = BgColor;
             ShowIcon = false;
             ShowInTaskbar = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
+            MinimizeBox = false;
+            SizeGripStyle = SizeGripStyle.Show;
 
             var header = new Label
             {

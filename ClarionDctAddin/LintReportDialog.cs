@@ -36,13 +36,17 @@ namespace ClarionDctAddin
             Text = singleTable == null
                 ? "Lint report - " + dictName
                 : "Lint report - " + (DictModel.AsString(DictModel.GetProp(singleTable, "Name")) ?? "?");
-            Width = 1060;
-            Height = 640;
-            MinimumSize = new Size(820, 420);
+            Width = 1100;
+            Height = 680;
+            MinimumSize = new Size(780, 420);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = BgColor;
             ShowIcon = false;
             ShowInTaskbar = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
+            MinimizeBox = false;
+            SizeGripStyle = SizeGripStyle.Show;
 
             var header = new Label
             {
