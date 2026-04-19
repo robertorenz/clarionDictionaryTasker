@@ -164,7 +164,7 @@ namespace ClarionDctAddin
                               Implemented = true,
                               OnClick = delegate { OpenBatchRetype(); } },
                 new ToolDef { Name = "Standard audit pack",
-                              Description = "Preset: adds guid, CreatedOn/By, ModifiedOn/By, DeletedOn + unique key + triggers to every selected table. This version is preview-only — emits a Markdown recipe.",
+                              Description = "Pick a TEMPLATE TABLE that has the audit fields defined (Guid + CreatedOn/By + ModifiedOn/By + DeletedOn). Stamps them onto every selected target table via the proven Batch-copy-fields path. Backs up the .DCT first. Optional Markdown recipe export.",
                               Implemented = true,
                               OnClick = delegate { OpenStandardAuditPack(); } },
             }));

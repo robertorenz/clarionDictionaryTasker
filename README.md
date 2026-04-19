@@ -42,7 +42,7 @@ A SharpDevelop add-in for the **Clarion 12 IDE** that inspects the currently ope
 - **Safe rename field** — rename a field's label. Keys and relations follow automatically (they hold object refs); trigger bodies patched via word-boundary regex of `OLDLABEL` and `PREFIX:OLDLABEL`. `.DCT` backed up first.
 - **Batch rename (regex)** — regex find/replace across field Label / Description / Heading / Prompt, optionally scoped by table name regex. Preview the plan, then apply with backup.
 - **Batch retype fields** — select every field whose label matches a regex, change type / size / picture in one shot. Any field blank means "preserve". Preview + apply with backup.
-- **Standard audit pack** — preview-only: pick tables + pack fields (Guid, CreatedOn/By, ModifiedOn/By, DeletedOn), emit a Markdown recipe. Pair with **Batch copy fields** to apply.
+- **Standard audit pack** — pick a TEMPLATE TABLE that already has the audit fields defined (Guid + CreatedOn/By + ModifiedOn/By + DeletedOn). The tool auto-matches those labels against the template and stamps them onto every selected target table via the proven Batch-copy-fields path. `.DCT` backed up first. Optional Markdown recipe export.
 
 ### Enterprise glue
 - **Git commit hook** — detects the repo root, shows `git status` for the `.DCT`, seeds a commit message, commits and optionally pushes. Manual rather than auto-on-save, for reliability across Clarion 12 point releases.
