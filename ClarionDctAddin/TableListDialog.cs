@@ -118,11 +118,12 @@ namespace ClarionDctAddin
 
             // Right-click menu — actions scoped to the selected table.
             var ctx = new ContextMenuStrip();
-            ctx.Items.Add("Show fields...",      null, delegate { ShowFieldsForSelection(); });
-            ctx.Items.Add("Export to JSON...",   null, delegate { ExportSelected(); });
-            ctx.Items.Add("Copy table name",     null, delegate { CopySelectedName(); });
+            ctx.Items.Add("Show fields...",         null, delegate { ShowFieldsForSelection(); });
+            ctx.Items.Add("Export to JSON...",      null, delegate { ExportSelected(); });
+            ctx.Items.Add("Export SQL DDL...",      null, delegate { ExportSqlForSelected(); });
+            ctx.Items.Add("Copy table name",        null, delegate { CopySelectedName(); });
             ctx.Items.Add(new ToolStripSeparator());
-            ctx.Items.Add("Lint this table...",  null, delegate { LintSelectedTable(); });
+            ctx.Items.Add("Lint this table...",     null, delegate { LintSelectedTable(); });
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("More dictionary tools...", null, delegate { OpenToolsDialog(); });
             lv.ContextMenuStrip = ctx;
@@ -193,6 +194,18 @@ namespace ClarionDctAddin
                 Clipboard.SetText(name);
             }
             catch { /* clipboard can fail under remote sessions */ }
+        }
+
+        void ExportSqlForSelected()
+        {
+            if (lv.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "Select a table first.", "Dict Tools",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var table = lv.SelectedItems[0].Tag;
+            using (var dlg = new SqlDdlDialog(dict, table)) dlg.ShowDialog(this);
         }
 
         void LintSelectedTable()

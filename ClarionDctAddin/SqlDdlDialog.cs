@@ -12,6 +12,7 @@ namespace ClarionDctAddin
         static readonly Color HeaderColor = Color.FromArgb(45,  90, 135);
 
         readonly object dict;
+        readonly object singleTable;
 
         ComboBox cboDialect;
         CheckBox chkDrop;
@@ -22,9 +23,12 @@ namespace ClarionDctAddin
 
         bool inSetup = true;
 
-        public SqlDdlDialog(object dict)
+        public SqlDdlDialog(object dict) : this(dict, null) { }
+
+        public SqlDdlDialog(object dict, object singleTable)
         {
             this.dict = dict;
+            this.singleTable = singleTable;
             BuildUi();
             inSetup = false;
             Regenerate();
@@ -32,7 +36,11 @@ namespace ClarionDctAddin
 
         void BuildUi()
         {
-            Text = "SQL DDL export - " + DictModel.GetDictionaryName(dict);
+            var singleLabel = singleTable == null ? "" :
+                (DictModel.AsString(DictModel.GetProp(singleTable, "Label")) ?? "");
+            Text = singleTable == null
+                ? "SQL DDL export - " + DictModel.GetDictionaryName(dict)
+                : "SQL DDL - " + singleLabel;
             Width = 1080;
             Height = 720;
             MinimumSize = new Size(820, 480);
@@ -54,7 +62,9 @@ namespace ClarionDctAddin
                 Font = new Font("Segoe UI Semibold", 11F),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(16, 0, 0, 0),
-                Text = "SQL DDL export   " + DictModel.GetDictionaryName(dict)
+                Text = singleTable == null
+                    ? "SQL DDL export   " + DictModel.GetDictionaryName(dict)
+                    : "SQL DDL   table: " + singleLabel + "     dict: " + DictModel.GetDictionaryName(dict)
             };
 
             var toolbar = new Panel { Dock = DockStyle.Top, Height = 76, BackColor = BgColor, Padding = new Padding(16, 10, 16, 10) };
@@ -67,8 +77,16 @@ namespace ClarionDctAddin
                 Font = new Font("Segoe UI", 9F)
             };
             cboDialect.Items.AddRange(new object[] { "SQL Server", "PostgreSQL", "SQLite", "MySQL", "MariaDB" });
-            cboDialect.SelectedIndex = 0;
-            cboDialect.SelectedIndexChanged += delegate { if (!inSetup) Regenerate(); };
+            // Load the remembered dialect as the starting selection.
+            int preferredIdx = (int)Settings.PreferredDialect;
+            cboDialect.SelectedIndex = (preferredIdx >= 0 && preferredIdx < cboDialect.Items.Count) ? preferredIdx : 0;
+            cboDialect.SelectedIndexChanged += delegate
+            {
+                if (inSetup) return;
+                // Persist the user's choice so every future export defaults to it.
+                Settings.PreferredDialect = (SqlDdlGenerator.Dialect)cboDialect.SelectedIndex;
+                Regenerate();
+            };
 
             chkDrop     = MakeCheck("Drop if exists",     240, 10, true);
             chkIndexes  = MakeCheck("Include indexes",    390, 10, true);
@@ -146,7 +164,9 @@ namespace ClarionDctAddin
                     IncludeComments  = chkComments.Checked,
                     UseFullPathName  = chkFullPath.Checked,
                 };
-                txtOutput.Text = SqlDdlGenerator.Generate(dict, opt);
+                txtOutput.Text = singleTable != null
+                    ? SqlDdlGenerator.GenerateForTable(singleTable, opt)
+                    : SqlDdlGenerator.Generate(dict, opt);
                 txtOutput.SelectionStart = 0;
                 txtOutput.SelectionLength = 0;
             }
@@ -178,7 +198,9 @@ namespace ClarionDctAddin
 
         void SaveAs()
         {
-            var suggested = DictModel.GetDictionaryName(dict) + ".sql";
+            var suggested = (singleTable == null
+                ? DictModel.GetDictionaryName(dict)
+                : DictModel.AsString(DictModel.GetProp(singleTable, "Label")) ?? "table") + ".sql";
             using (var dlg = new SaveFileDialog
             {
                 Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*",

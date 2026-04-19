@@ -196,7 +196,8 @@ namespace ClarionDctAddin
                 var node = new TableNode(
                     name,
                     DictModel.CountEnumerable(t, "Fields"),
-                    DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "");
+                    DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "",
+                    t);
                 nodes.Add(node);
                 byName[name] = node;
             }
@@ -1143,6 +1144,33 @@ namespace ClarionDctAddin
                 canvas.Invalidate();
             }
             canvas.Cursor = Cursors.Default;
+
+            if (e.Button == MouseButtons.Right && !matrixMode)
+                ShowRightClickMenu(e.Location);
+        }
+
+        void ShowRightClickMenu(Point screenRelToCanvas)
+        {
+            var p = ScreenToLogical(screenRelToCanvas);
+            TableNode hit = null;
+            for (int i = nodes.Count - 1; i >= 0; i--)
+            {
+                if (!nodes[i].Visible) continue;
+                if (nodes[i].Bounds.Contains(p)) { hit = nodes[i]; break; }
+            }
+            if (hit == null || hit.Table == null) return;
+
+            var ctx = new ContextMenuStrip();
+            var node = hit;
+            ctx.Items.Add("Export SQL DDL...", null, delegate
+            {
+                using (var dlg = new SqlDdlDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
+            });
+            ctx.Items.Add("Show fields...", null, delegate
+            {
+                using (var dlg = new FieldListDialog(node.Table)) dlg.ShowDialog(FindForm());
+            });
+            ctx.Show(canvas, screenRelToCanvas);
         }
 
         // --- paint ---
@@ -1429,9 +1457,13 @@ namespace ClarionDctAddin
             public readonly string Name;
             public readonly int    FieldCount;
             public readonly string Driver;
+            public readonly object Table;
             public Rectangle Bounds;
             public bool Visible = true;
-            public TableNode(string name, int fc, string drv) { Name = name; FieldCount = fc; Driver = drv; }
+            public TableNode(string name, int fc, string drv, object table)
+            {
+                Name = name; FieldCount = fc; Driver = drv; Table = table;
+            }
         }
 
         sealed class RelEdge

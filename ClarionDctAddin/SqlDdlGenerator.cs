@@ -46,6 +46,20 @@ namespace ClarionDctAddin
             return sb.ToString();
         }
 
+        public static string GenerateForTable(object table, Options opt)
+        {
+            var label = DictModel.AsString(DictModel.GetProp(table, "Label")) ?? "?";
+            var sb = new StringBuilder();
+            sb.AppendLine("-- ================================================================");
+            sb.AppendLine("-- SQL DDL for table '" + label + "'");
+            sb.AppendLine("-- Generated:   " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            sb.AppendLine("-- Dialect:     " + opt.Dialect);
+            sb.AppendLine("-- ================================================================");
+            sb.AppendLine();
+            GenerateTable(sb, table, opt);
+            return sb.ToString();
+        }
+
         static void GenerateTable(StringBuilder sb, object table, Options opt)
         {
             var label   = DictModel.AsString(DictModel.GetProp(table, "Label")) ?? "?";

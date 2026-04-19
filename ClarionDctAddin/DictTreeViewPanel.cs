@@ -132,7 +132,47 @@ namespace ClarionDctAddin
                     Populate(e.Node);
                 }
             };
+
+            // Right-click surfaces table-scoped actions when the selected node
+            // represents a table (TableToken).
+            var ctx = new ContextMenuStrip();
+            var miSqlDdl = new ToolStripMenuItem("Export SQL DDL...");
+            miSqlDdl.Click += delegate
+            {
+                var table = GetContextTable();
+                if (table == null) return;
+                using (var dlg = new SqlDdlDialog(dict, table)) dlg.ShowDialog(FindForm());
+            };
+            var miFields = new ToolStripMenuItem("Show fields...");
+            miFields.Click += delegate
+            {
+                var table = GetContextTable();
+                if (table == null) return;
+                using (var dlg = new FieldListDialog(table)) dlg.ShowDialog(FindForm());
+            };
+            ctx.Items.Add(miSqlDdl);
+            ctx.Items.Add(miFields);
+
+            ctx.Opening += delegate(object s, System.ComponentModel.CancelEventArgs e)
+            {
+                // Only show the menu over a table-kind node.
+                if (GetContextTable() == null) e.Cancel = true;
+            };
+            tv.NodeMouseClick += delegate(object s, TreeNodeMouseClickEventArgs e)
+            {
+                if (e.Button == MouseButtons.Right) tv.SelectedNode = e.Node;
+            };
+            tv.ContextMenuStrip = ctx;
+
             Controls.Add(tv);
+        }
+
+        object GetContextTable()
+        {
+            var node = tv.SelectedNode;
+            if (node == null) return null;
+            var tt = node.Tag as TableToken;
+            return tt != null ? tt.Table : null;
         }
 
         void BuildRoot()
