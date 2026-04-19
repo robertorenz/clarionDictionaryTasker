@@ -729,20 +729,30 @@
 
   <h3>Compare dictionaries</h3>
   <p>
-    Clarion 12 only holds <em>one</em> <code>.DCT</code> open at a time, so the workflow is
-    snapshot-based:
+    Two flows, depending on whether both dicts are open right now:
   </p>
+  <h4>Live vs. live (two tabs open)</h4>
+  <p>
+    Clarion 12 happily holds multiple <code>.DCT</code> tabs open at once. Click
+    <strong>Compare to another open dict...</strong> — the add-in enumerates every
+    <code>DataDictionaryViewContent</code> in the workbench, filters out the current one,
+    and either picks the other automatically (when exactly one is left) or pops a small
+    picker when two or more other tabs are open.
+  </p>
+  <h4>Live vs. snapshot (or snapshot vs. snapshot)</h4>
   <ol>
     <li>Click <strong>Save current as snapshot...</strong> — writes a small
         <code>*.tasker-snap</code> text file.</li>
-    <li>Modify the dict (or open a different <code>.DCT</code> in Clarion).</li>
-    <li>Click <strong>Load snapshot &amp; compare...</strong> — a tree shows
-        <em>Added / Removed / Changed</em> tables with field-, key-, and relation-level
-        drill-down.</li>
-    <li><strong>Export diff as Markdown...</strong> emits the whole diff as a shareable
-        document.</li>
+    <li>Modify the dict (or close it and open a different one later).</li>
+    <li>Click <strong>Load snapshot &amp; compare...</strong> — diffs the loaded snapshot
+        against the currently-active live dict.</li>
   </ol>
-  <p>The snapshot format is documented <a href="#tools-snapshot">below</a>.</p>
+  <p>
+    Either way, the result is a tree of <em>Added / Removed / Changed</em> tables with
+    field-, key-, and relation-level drill-down. <strong>Export diff as Markdown...</strong>
+    emits the whole thing as a shareable document. The snapshot format is documented
+    <a href="#tools-snapshot">below</a>.
+  </p>
 
   <h3>Change-log generator</h3>
   <p>

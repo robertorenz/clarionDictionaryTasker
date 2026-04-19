@@ -54,6 +54,33 @@ namespace ClarionDctAddin
             }
         }
 
+        // Enumerates every Clarion dictionary currently open in the workbench (across
+        // all tabs, not just the active one). Clarion 12 can hold multiple .DCTs open
+        // simultaneously, which is what makes live-vs-live comparison possible.
+        public static IList<object> GetAllOpenDictionaries()
+        {
+            var list = new List<object>();
+            try
+            {
+                var wb = WorkbenchSingleton.Workbench;
+                if (wb == null) return list;
+                var vcs = wb.ViewContentCollection as IEnumerable;
+                if (vcs == null) return list;
+                foreach (var vc in vcs)
+                {
+                    if (vc == null) continue;
+                    if (vc.GetType().FullName != "SoftVelocity.DataDictionary.Editor.DataDictionaryViewContent") continue;
+                    var control = GetProp(vc, "Control");
+                    if (control == null) continue;
+                    var dict = GetProp(control, "DCT");
+                    if (dict == null) continue;
+                    list.Add(dict);
+                }
+            }
+            catch { }
+            return list;
+        }
+
         public static IList<object> GetTables(object dict)
         {
             var coll = GetProp(dict, "Tables") as IEnumerable;

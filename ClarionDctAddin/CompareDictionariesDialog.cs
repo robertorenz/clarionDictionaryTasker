@@ -54,12 +54,15 @@ namespace ClarionDctAddin
             };
 
             var toolbar = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = BgColor, Padding = new Padding(16, 10, 16, 6) };
-            var btnSave = new Button { Text = "Save current as snapshot...", Width = 210, Height = 30, Left = 0,   Top = 6, FlatStyle = FlatStyle.System };
+            var btnLiveVsLive = new Button { Text = "Compare to another open dict...", Width = 230, Height = 30, Left = 0,   Top = 6, FlatStyle = FlatStyle.System };
+            btnLiveVsLive.Click += delegate { CompareToOtherOpenDict(); };
+            var btnSave = new Button { Text = "Save current as snapshot...", Width = 210, Height = 30, Left = 240, Top = 6, FlatStyle = FlatStyle.System };
             btnSave.Click += delegate { SaveSnapshot(); };
-            var btnLoad = new Button { Text = "Load snapshot && compare...", Width = 210, Height = 30, Left = 220, Top = 6, FlatStyle = FlatStyle.System };
+            var btnLoad = new Button { Text = "Load snapshot && compare...", Width = 210, Height = 30, Left = 460, Top = 6, FlatStyle = FlatStyle.System };
             btnLoad.Click += delegate { LoadAndCompare(); };
-            btnExport = new Button { Text = "Export diff as Markdown...",    Width = 210, Height = 30, Left = 440, Top = 6, FlatStyle = FlatStyle.System, Enabled = false };
+            btnExport = new Button { Text = "Export diff as Markdown...",    Width = 210, Height = 30, Left = 680, Top = 6, FlatStyle = FlatStyle.System, Enabled = false };
             btnExport.Click += delegate { ExportMarkdown(); };
+            toolbar.Controls.Add(btnLiveVsLive);
             toolbar.Controls.Add(btnSave);
             toolbar.Controls.Add(btnLoad);
             toolbar.Controls.Add(btnExport);
@@ -70,7 +73,7 @@ namespace ClarionDctAddin
                 Font = new Font("Segoe UI", 9F),
                 ForeColor = MutedColor,
                 Padding = new Padding(18, 2, 0, 0),
-                Text = "No snapshot loaded. Save a snapshot first, then change the dictionary or open a different one, then Load & compare."
+                Text = "Either pick another open .DCT tab, or load a saved *.tasker-snap snapshot."
             };
             lblSummary = new Label
             {
@@ -103,6 +106,49 @@ namespace ClarionDctAddin
             Controls.Add(toolbar);
             Controls.Add(header);
             CancelButton = btnClose;
+        }
+
+        void CompareToOtherOpenDict()
+        {
+            var all = DictModel.GetAllOpenDictionaries();
+            var others = new List<object>();
+            foreach (var d in all) if (!ReferenceEquals(d, dict)) others.Add(d);
+
+            if (others.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "Only one dictionary is open in Clarion right now.\r\n\r\n"
+                    + "Open a second .DCT tab (File → Open Dictionary...) and try again, "
+                    + "or use \"Load snapshot & compare...\" to compare against a saved snapshot.",
+                    "Compare dictionaries", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            object other;
+            if (others.Count == 1) other = others[0];
+            else
+            {
+                using (var picker = new OtherDictPickerDialog(others))
+                {
+                    if (picker.ShowDialog(this) != DialogResult.OK || picker.Selected == null) return;
+                    other = picker.Selected;
+                }
+            }
+
+            Cursor = Cursors.WaitCursor;
+            try
+            {
+                // Snapshot both sides right now; the diff engine works on snapshots.
+                snapshot  = DictSnapshot.CaptureFromLive(other);
+                liveCached = DictSnapshot.CaptureFromLive(dict);
+                lblSnapshot.Text = "Comparing: "
+                    + DictModel.GetDictionaryName(other) + "   =>   "
+                    + DictModel.GetDictionaryName(dict) + "   (both live)";
+                var diff = DictDiff.Compute(snapshot, liveCached);
+                RenderDiff(diff);
+                btnExport.Enabled = true;
+            }
+            finally { Cursor = Cursors.Default; }
         }
 
         void SaveSnapshot()
@@ -349,6 +395,79 @@ namespace ClarionDctAddin
             if (k.Unique)  tags.Add("unique");
             if (k.Primary) tags.Add("primary");
             return s + (tags.Count > 0 ? "   [" + string.Join(", ", tags.ToArray()) + "]" : "");
+        }
+
+        // Small modal picker shown when more than one "other" dict is open.
+        sealed class OtherDictPickerDialog : Form
+        {
+            public object Selected;
+            ListBox lb;
+
+            public OtherDictPickerDialog(IList<object> candidates)
+            {
+                Text = "Pick the OTHER dictionary";
+                Width = 560; Height = 360;
+                StartPosition = FormStartPosition.CenterParent;
+                BackColor = BgColor;
+                FormBorderStyle = FormBorderStyle.Sizable;
+                MaximizeBox = false; MinimizeBox = false;
+                ShowIcon = false; ShowInTaskbar = false;
+                MinimumSize = new Size(440, 260);
+
+                var header = new Label
+                {
+                    Dock = DockStyle.Top, Height = 44,
+                    BackColor = HeaderColor, ForeColor = Color.White,
+                    Font = new Font("Segoe UI Semibold", 11F),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Padding = new Padding(16, 0, 0, 0),
+                    Text = "Pick the OTHER dictionary to compare against"
+                };
+
+                lb = new ListBox
+                {
+                    Dock = DockStyle.Fill,
+                    Font = new Font("Segoe UI", 10F),
+                    IntegralHeight = false
+                };
+                foreach (var d in candidates) lb.Items.Add(new Wrap(d));
+                if (lb.Items.Count > 0) lb.SelectedIndex = 0;
+                lb.DoubleClick += delegate { Accept(); };
+
+                var bottom = new Panel { Dock = DockStyle.Bottom, Height = 56, BackColor = PanelColor, Padding = new Padding(16, 10, 16, 10) };
+                var btnOk = new Button { Text = "OK", Width = 100, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
+                btnOk.Click += delegate { Accept(); };
+                var btnCancel = new Button { Text = "Cancel", Width = 100, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
+                btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+                bottom.Controls.Add(btnOk);
+                bottom.Controls.Add(btnCancel);
+
+                Controls.Add(lb);
+                Controls.Add(bottom);
+                Controls.Add(header);
+                AcceptButton = btnOk;
+                CancelButton = btnCancel;
+            }
+
+            void Accept()
+            {
+                var sel = lb.SelectedItem as Wrap;
+                if (sel == null) return;
+                Selected = sel.Dict;
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+
+            sealed class Wrap
+            {
+                public readonly object Dict;
+                public Wrap(object d) { Dict = d; }
+                public override string ToString()
+                {
+                    return DictModel.GetDictionaryName(Dict)
+                        + "   —   " + DictModel.GetDictionaryFileName(Dict);
+                }
+            }
         }
 
         void ExportMarkdown()
