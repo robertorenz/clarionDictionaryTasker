@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -16,6 +17,11 @@ namespace ClarionDctAddin
         readonly object dict;
         readonly IList<object> tables;
         ListView lv;
+        TextBox  txtFilter;
+        ComboBox cbDriver;
+        Label    lblCount;
+        readonly List<ListViewItem> allItems = new List<ListViewItem>();
+        TableSorter sorter;
 
         public TableListDialog(object dict)
         {
@@ -115,6 +121,9 @@ namespace ClarionDctAddin
             lv.Columns.Add("Keys", 55, HorizontalAlignment.Right);
             lv.Columns.Add("Description", 440);
             lv.DoubleClick += delegate { ShowFieldsForSelection(); };
+            sorter = new TableSorter { Column = 0, Ascending = true };
+            lv.ListViewItemSorter = sorter;
+            lv.ColumnClick += OnColumnClick;
 
             // Right-click menu — actions scoped to the selected table.
             var ctx = new ContextMenuStrip();
@@ -129,8 +138,24 @@ namespace ClarionDctAddin
             ctx.Items.Add("More dictionary tools...", null, delegate { OpenToolsDialog(); });
             lv.ContextMenuStrip = ctx;
 
-            var host = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 8, 8, 0), BackColor = BgColor };
+            // Filter bar above the list
+            var filterBar = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = BgColor, Padding = new Padding(8, 8, 8, 4) };
+            var lblFilter = new Label { Text = "Filter:", Left = 0,   Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            txtFilter     = new TextBox { Left = 50,  Top = 4, Width = 300, Font = new Font("Segoe UI", 9.5F) };
+            txtFilter.TextChanged += delegate { ApplyFilter(); };
+            var lblDriver = new Label { Text = "Driver:", Left = 366, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            cbDriver      = new ComboBox { Left = 416, Top = 4, Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9.5F) };
+            cbDriver.SelectedIndexChanged += delegate { ApplyFilter(); };
+            lblCount      = new Label { Left = 592, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F), ForeColor = Color.FromArgb(100, 115, 135) };
+            filterBar.Controls.Add(lblFilter);
+            filterBar.Controls.Add(txtFilter);
+            filterBar.Controls.Add(lblDriver);
+            filterBar.Controls.Add(cbDriver);
+            filterBar.Controls.Add(lblCount);
+
+            var host = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 0, 8, 0), BackColor = BgColor };
             host.Controls.Add(lv);
+            host.Controls.Add(filterBar);
 
             var btnPanel = new Panel { Dock = DockStyle.Bottom, Height = 48, BackColor = BgColor, Padding = new Padding(8, 8, 8, 8) };
             var btnFields = MakeButton("Show fields...",                 b => ShowFieldsForSelection());
@@ -163,27 +188,122 @@ namespace ClarionDctAddin
 
         void PopulateList()
         {
+            allItems.Clear();
+            var distinctDrivers = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in tables)
+            {
+                var name   = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "";
+                var prefix = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "";
+                var drv    = DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "";
+                var desc   = DictModel.AsString(DictModel.GetProp(t, "Description")) ?? "";
+                var fCount = DictModel.CountEnumerable(t, "Fields");
+                var kCount = DictModel.CountEnumerable(t, "Keys");
+                var item = new ListViewItem(new[]
+                {
+                    name, prefix, drv, fCount.ToString(), kCount.ToString(), desc
+                });
+                item.Tag = t;
+                allItems.Add(item);
+                if (!string.IsNullOrEmpty(drv)) distinctDrivers.Add(drv);
+            }
+
+            cbDriver.Items.Clear();
+            cbDriver.Items.Add("(all)");
+            foreach (var d in distinctDrivers) cbDriver.Items.Add(d);
+            cbDriver.SelectedIndex = 0;
+
+            ApplyFilter();
+        }
+
+        void ApplyFilter()
+        {
+            var needle = (txtFilter.Text ?? "").Trim().ToLowerInvariant();
+            var driver = cbDriver.SelectedIndex > 0 ? (cbDriver.SelectedItem as string) : null;
+
             lv.BeginUpdate();
             try
             {
-                foreach (var t in tables)
+                lv.Items.Clear();
+                int shown = 0;
+                foreach (var item in allItems)
                 {
-                    var name   = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "";
-                    var prefix = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "";
-                    var drv    = DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "";
-                    var desc   = DictModel.AsString(DictModel.GetProp(t, "Description")) ?? "";
-                    var fCount = DictModel.CountEnumerable(t, "Fields");
-                    var kCount = DictModel.CountEnumerable(t, "Keys");
-                    var item = new ListViewItem(new[]
-                    {
-                        name, prefix, drv, fCount.ToString(), kCount.ToString(), desc
-                    });
-                    item.Tag = t;
+                    if (driver != null
+                        && !string.Equals(item.SubItems[2].Text, driver, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (needle.Length > 0 && !RowMatches(item, needle))
+                        continue;
                     lv.Items.Add(item);
+                    shown++;
                 }
+                lv.Sort();
                 if (lv.Items.Count > 0) lv.Items[0].Selected = true;
+                lblCount.Text = shown + " of " + allItems.Count + " tables";
             }
             finally { lv.EndUpdate(); }
+        }
+
+        static bool RowMatches(ListViewItem item, string needleLower)
+        {
+            // Substring hit in any column is enough.
+            for (int i = 0; i < item.SubItems.Count; i++)
+            {
+                var txt = item.SubItems[i].Text;
+                if (!string.IsNullOrEmpty(txt)
+                    && txt.ToLowerInvariant().IndexOf(needleLower, StringComparison.Ordinal) >= 0) return true;
+            }
+            return false;
+        }
+
+        void OnColumnClick(object sender, ColumnClickEventArgs e)
+        {
+            if (sorter.Column == e.Column) sorter.Ascending = !sorter.Ascending;
+            else { sorter.Column = e.Column; sorter.Ascending = true; }
+            lv.Sort();
+            // Paint a small arrow on the sorted column header by rewriting its text.
+            for (int i = 0; i < lv.Columns.Count; i++)
+            {
+                var original = BaseHeaderText(lv.Columns[i].Text);
+                if (i == sorter.Column)
+                    lv.Columns[i].Text = original + (sorter.Ascending ? "  ^" : "  v");
+                else
+                    lv.Columns[i].Text = original;
+            }
+        }
+
+        static string BaseHeaderText(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return t;
+            var idx = t.IndexOf("  ^", StringComparison.Ordinal);
+            if (idx < 0) idx = t.IndexOf("  v", StringComparison.Ordinal);
+            return idx >= 0 ? t.Substring(0, idx) : t;
+        }
+
+        // ListView sorter that understands numeric columns (Fields / Keys).
+        sealed class TableSorter : IComparer
+        {
+            public int  Column;
+            public bool Ascending = true;
+            public int Compare(object x, object y)
+            {
+                var a = x as ListViewItem;
+                var b = y as ListViewItem;
+                if (a == null || b == null) return 0;
+                var sa = Column < a.SubItems.Count ? a.SubItems[Column].Text : "";
+                var sb = Column < b.SubItems.Count ? b.SubItems[Column].Text : "";
+                int cmp;
+                if (Column == 3 || Column == 4) // Fields, Keys — integer columns
+                {
+                    int ia, ib;
+                    int.TryParse(sa, out ia);
+                    int.TryParse(sb, out ib);
+                    cmp = ia.CompareTo(ib);
+                }
+                else
+                {
+                    cmp = string.Compare(sa, sb, StringComparison.OrdinalIgnoreCase);
+                }
+                return Ascending ? cmp : -cmp;
+            }
         }
 
         void CopySelectedName()
