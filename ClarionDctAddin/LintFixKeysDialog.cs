@@ -27,12 +27,13 @@ namespace ClarionDctAddin
         DataGridView grid;
         Label        lblSummary;
         Button       btnApply, btnRefresh, btnAutoBlank, btnAutoAll;
-        ComboBox     cbStyle, cbShow, cbOwner;
+        ComboBox     cbStyle, cbShow, cbOwner, cbKey;
         List<Row>    rows = new List<Row>();
         Dictionary<string, List<string>> otherOwners;   // ExternalName -> owners NOT in scope
 
         enum ShowFilter  { All, BlankOnly, DuplicatesOnly }
         enum OwnerSource { TableName, Prefix }
+        enum KeySource   { LabelOnly, FullName }
 
         enum NamingStyle
         {
@@ -114,18 +115,25 @@ namespace ClarionDctAddin
             cbStyle.Items.Add("Owner prefix + key as-is");
             cbStyle.SelectedIndex = 0;
             var lblOwner = new Label { Text = "Owner:", Left = 352, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
-            cbOwner = new ComboBox { Left = 400, Top = 4, Width = 130, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
+            cbOwner = new ComboBox { Left = 400, Top = 4, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
             cbOwner.Items.Add("Table name");
             cbOwner.Items.Add("Prefix");
             cbOwner.SelectedIndex = 0;
-            btnAutoBlank = new Button { Text = "Fill blanks", Left = 540, Top = 2, Width = 110, Height = 30, FlatStyle = FlatStyle.System };
+            var lblKey = new Label { Text = "Key:", Left = 532, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            cbKey = new ComboBox { Left = 564, Top = 4, Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
+            cbKey.Items.Add("Label only  (after the ':')");
+            cbKey.Items.Add("Full key name");
+            cbKey.SelectedIndex = 0;
+            btnAutoBlank = new Button { Text = "Fill blanks", Left = 736, Top = 2, Width = 100, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoBlank.Click += delegate { AutoFill(onlyBlanks: true); };
-            btnAutoAll   = new Button { Text = "Fill all (overwrite)", Left = 656, Top = 2, Width = 160, Height = 30, FlatStyle = FlatStyle.System };
+            btnAutoAll   = new Button { Text = "Fill all (overwrite)", Left = 842, Top = 2, Width = 150, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoAll.Click += delegate { AutoFill(onlyBlanks: false); };
             autoBar.Controls.Add(lblStyle);
             autoBar.Controls.Add(cbStyle);
             autoBar.Controls.Add(lblOwner);
             autoBar.Controls.Add(cbOwner);
+            autoBar.Controls.Add(lblKey);
+            autoBar.Controls.Add(cbKey);
             autoBar.Controls.Add(btnAutoBlank);
             autoBar.Controls.Add(btnAutoAll);
 
@@ -199,6 +207,7 @@ namespace ClarionDctAddin
         {
             var style       = (NamingStyle)cbStyle.SelectedIndex;
             var ownerSource = (OwnerSource)cbOwner.SelectedIndex;
+            var keySource   = (KeySource)cbKey.SelectedIndex;
             int touched = 0;
             // Iterate the full rows list so offscreen rows (filtered out of the
             // grid right now) still get auto-filled.
@@ -206,7 +215,8 @@ namespace ClarionDctAddin
             {
                 if (onlyBlanks && !string.IsNullOrWhiteSpace(r.ExternalName)) continue;
                 var ownerSegment = OwnerSegment(r, ownerSource);
-                var suggested = MakeName(style, ownerSegment, r.Name);
+                var keySegment   = KeySegmentOf(r, keySource);
+                var suggested = MakeName(style, ownerSegment, keySegment);
                 if (string.Equals(suggested, r.ExternalName, StringComparison.Ordinal)) continue;
                 r.ExternalName = suggested;
                 touched++;
@@ -233,6 +243,18 @@ namespace ClarionDctAddin
                 if (!string.IsNullOrWhiteSpace(p)) return p;
             }
             return r.Table ?? "";
+        }
+
+        // "Label only" strips the PREFIX:  part of a Clarion key name — the chunk
+        // up to and including the last ':'. So BIT:guidkey -> guidkey,
+        // CLI:NAME:UK -> UK (whatever follows the last colon). SQL index names
+        // can't contain ':' anyway, so keeping it would always be wrong.
+        static string KeySegmentOf(Row r, KeySource src)
+        {
+            var name = r.Name ?? "";
+            if (src == KeySource.FullName) return name;
+            var idx = name.LastIndexOf(':');
+            return idx >= 0 && idx + 1 < name.Length ? name.Substring(idx + 1) : name;
         }
 
         static string MakeName(NamingStyle style, string table, string key)
