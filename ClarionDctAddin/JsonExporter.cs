@@ -15,19 +15,49 @@ namespace ClarionDctAddin
     //     skipping explicit-interface re-implementations (names containing ".Design.") and anything that throws.
     internal static class JsonExporter
     {
-        const int MaxDepth = 4;
+        const int MaxDepth     = 3;
+        const int MaxNodes     = 200_000;   // safety cap; runaway reflection cycle would dwarf this
+        const int MaxCharsSoft = 50_000_000; // ~50 MB; huge output is pointless and can OOM the IDE's text controls
+
+        // Ref-equality so we can detect cycles without needing Equals / GetHashCode on model types.
+        sealed class RefCmp : IEqualityComparer<object>
+        {
+            public new bool Equals(object x, object y) { return object.ReferenceEquals(x, y); }
+            public int GetHashCode(object obj) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj); }
+        }
+        static readonly IEqualityComparer<object> RefEq = new RefCmp();
 
         public static string TableJson(object table)
         {
             var sb = new StringBuilder();
-            WriteTable(sb, table, 0);
+            var ctx = new Ctx();
+            WriteTable(sb, table, 0, ctx);
             sb.AppendLine();
+            if (ctx.Truncated) sb.AppendLine("// NOTE: output truncated — reflection cycle or size cap hit. Used hand-picked schema where possible.");
             return sb.ToString();
+        }
+
+        sealed class Ctx
+        {
+            public int Nodes;
+            public bool Truncated;
+            public readonly HashSet<object> Visited = new HashSet<object>(RefEq);
+            public bool Stop(StringBuilder sb)
+            {
+                if (Truncated) return true;
+                if (Nodes >= MaxNodes || sb.Length >= MaxCharsSoft)
+                {
+                    Truncated = true;
+                    return true;
+                }
+                return false;
+            }
         }
 
         public static string TablesJson(string dictName, string dictFileName, IList<object> tables)
         {
             var sb = new StringBuilder();
+            var ctx = new Ctx();
             sb.Append("{\n");
             WriteKey(sb, 1, "dictionary"); sb.Append(JsonStr(dictName)); sb.Append(",\n");
             WriteKey(sb, 1, "fileName");   sb.Append(JsonStr(dictFileName)); sb.Append(",\n");
@@ -36,17 +66,19 @@ namespace ClarionDctAddin
             WriteKey(sb, 1, "tables"); sb.Append("[\n");
             for (int i = 0; i < tables.Count; i++)
             {
-                WriteTable(sb, tables[i], 2);
+                WriteTable(sb, tables[i], 2, ctx);
                 if (i + 1 < tables.Count) sb.Append(",");
                 sb.Append("\n");
+                if (ctx.Stop(sb)) break;
             }
             Indent(sb, 1); sb.Append("]\n");
             sb.Append("}\n");
+            if (ctx.Truncated) sb.AppendLine("// NOTE: output truncated — reflection cycle or size cap hit.");
             return sb.ToString();
         }
 
         // --- table ---
-        static void WriteTable(StringBuilder sb, object t, int indent)
+        static void WriteTable(StringBuilder sb, object t, int indent, Ctx ctx)
         {
             Indent(sb, indent); sb.Append("{\n");
             var first = true;
@@ -72,17 +104,18 @@ namespace ClarionDctAddin
             WriteBool(sb,   indent + 1, ref first, "isAlias",         DictModel.GetProp(t, "IsAlias"));
             WriteBool(sb,   indent + 1, ref first, "hasTriggers",     DictModel.GetProp(t, "HasTriggers"));
             WriteBool(sb,   indent + 1, ref first, "hasPrimaryKey",   DictModel.GetProp(t, "HasPrimaryKey"));
-            WriteFields    (sb, indent + 1, ref first,              DictModel.GetProp(t, "Fields"));
-            WriteCollection(sb, indent + 1, ref first, "keys",      DictModel.GetProp(t, "Keys"));
-            WriteCollection(sb, indent + 1, ref first, "relations", DictModel.GetProp(t, "Relations"));
-            WriteCollection(sb, indent + 1, ref first, "triggers",  DictModel.GetProp(t, "Triggers"));
-            WriteCollection(sb, indent + 1, ref first, "aliases",   DictModel.GetProp(t, "Aliases"));
+            WriteFields    (sb, indent + 1, ref first,              DictModel.GetProp(t, "Fields"), ctx);
+            WriteCollection(sb, indent + 1, ref first, "keys",      DictModel.GetProp(t, "Keys"),      ctx);
+            WriteCollection(sb, indent + 1, ref first, "relations", DictModel.GetProp(t, "Relations"), ctx);
+            WriteCollection(sb, indent + 1, ref first, "triggers",  DictModel.GetProp(t, "Triggers"),  ctx);
+            WriteCollection(sb, indent + 1, ref first, "aliases",   DictModel.GetProp(t, "Aliases"),   ctx);
             sb.Append("\n");
             Indent(sb, indent); sb.Append("}");
+            ctx.Nodes++;
         }
 
         // --- fields: hand-picked schema based on DDField shape ---
-        static void WriteFields(StringBuilder sb, int indent, ref bool outerFirst, object value)
+        static void WriteFields(StringBuilder sb, int indent, ref bool outerFirst, object value, Ctx ctx)
         {
             var en = value as IEnumerable;
             if (en == null) return;
@@ -93,15 +126,16 @@ namespace ClarionDctAddin
             foreach (var field in en)
             {
                 if (field == null) continue;
+                if (ctx.Stop(sb)) break;
                 sb.Append(any ? ",\n" : "\n");
                 any = true;
-                WriteField(sb, indent + 1, field);
+                WriteField(sb, indent + 1, field, ctx);
             }
             if (any) { sb.Append("\n"); Indent(sb, indent); }
             sb.Append("]");
         }
 
-        static void WriteField(StringBuilder sb, int indent, object f)
+        static void WriteField(StringBuilder sb, int indent, object f, Ctx ctx)
         {
             Indent(sb, indent); sb.Append("{\n");
             var first = true;
@@ -147,6 +181,7 @@ namespace ClarionDctAddin
             WriteScalar(sb, indent + 1, ref first, "overFieldName",    DictModel.AsString(DictModel.GetProp(DictModel.GetProp(f, "OverField"), "Name")));
             sb.Append("\n");
             Indent(sb, indent); sb.Append("}");
+            ctx.Nodes++;
         }
 
         static void WriteNumber(StringBuilder sb, int indent, ref bool first, string key, object value)
@@ -161,7 +196,7 @@ namespace ClarionDctAddin
         }
 
         // --- generic object/collection writers ---
-        static void WriteCollection(StringBuilder sb, int indent, ref bool first, string key, object value)
+        static void WriteCollection(StringBuilder sb, int indent, ref bool first, string key, object value, Ctx ctx)
         {
             var en = value as IEnumerable;
             if (en == null || value is string) return;
@@ -171,19 +206,28 @@ namespace ClarionDctAddin
             bool any = false;
             foreach (var item in en)
             {
+                if (ctx.Stop(sb)) break;
                 if (!any) sb.Append("\n"); else sb.Append(",\n");
                 any = true;
-                WriteUnknown(sb, indent + 1, item, 1);
+                WriteUnknown(sb, indent + 1, item, 1, ctx);
             }
             if (any) { sb.Append("\n"); Indent(sb, indent); }
             sb.Append("]");
         }
 
-        static void WriteUnknown(StringBuilder sb, int indent, object o, int depth)
+        static void WriteUnknown(StringBuilder sb, int indent, object o, int depth, Ctx ctx)
         {
             if (o == null) { Indent(sb, indent); sb.Append("null"); return; }
             var t = o.GetType();
-            if (IsScalar(t)) { Indent(sb, indent); sb.Append(ScalarLiteral(o)); return; }
+            if (IsScalar(t)) { Indent(sb, indent); sb.Append(ScalarLiteral(o)); ctx.Nodes++; return; }
+
+            // Cycle guard: if we've serialised this object before in this run, emit a placeholder.
+            if (!ctx.Visited.Add(o))
+            {
+                Indent(sb, indent); sb.Append("\"<cycle: " + JsonEscapeInline(t.Name) + ">\"");
+                return;
+            }
+            if (ctx.Stop(sb)) { Indent(sb, indent); sb.Append("\"<truncated>\""); return; }
 
             Indent(sb, indent); sb.Append("{\n");
             var first = true;
@@ -191,6 +235,7 @@ namespace ClarionDctAddin
                                .Where(pp => pp.CanRead && pp.GetIndexParameters().Length == 0)
                                .OrderBy(pp => pp.Name))
             {
+                if (ctx.Stop(sb)) break;
                 // Skip explicit interface re-implementations — noisy, near-duplicate data.
                 if (p.Name.IndexOf('.') >= 0) continue;
                 object v;
@@ -208,8 +253,18 @@ namespace ClarionDctAddin
                 else if (depth < MaxDepth && v is IEnumerable && !(v is string))
                 {
                     // Only emit collections of scalars or one-more-level of objects, and only when non-empty.
-                    var list = new List<object>();
-                    foreach (var x in (IEnumerable)v) list.Add(x);
+                    // Materialise defensively — catch the wild-eyed enumerator that decides to throw.
+                    List<object> list;
+                    try
+                    {
+                        list = new List<object>();
+                        foreach (var x in (IEnumerable)v)
+                        {
+                            list.Add(x);
+                            if (list.Count > 10_000) break; // sanity cap per-collection
+                        }
+                    }
+                    catch { continue; }
                     if (list.Count == 0) continue;
 
                     Comma(sb, ref first);
@@ -217,8 +272,9 @@ namespace ClarionDctAddin
                     sb.Append("[");
                     for (int i = 0; i < list.Count; i++)
                     {
+                        if (ctx.Stop(sb)) break;
                         sb.Append(i == 0 ? "\n" : ",\n");
-                        WriteUnknown(sb, indent + 2, list[i], depth + 1);
+                        WriteUnknown(sb, indent + 2, list[i], depth + 1, ctx);
                     }
                     sb.Append("\n"); Indent(sb, indent + 1); sb.Append("]");
                 }
@@ -226,6 +282,13 @@ namespace ClarionDctAddin
             }
             sb.Append("\n");
             Indent(sb, indent); sb.Append("}");
+            ctx.Nodes++;
+        }
+
+        static string JsonEscapeInline(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
         // --- scalar helpers ---

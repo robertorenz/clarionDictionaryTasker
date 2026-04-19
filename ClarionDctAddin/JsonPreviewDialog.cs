@@ -30,10 +30,14 @@ namespace ClarionDctAddin
         TextBox  txtOutput;
         TreeView tree;
         Label    stats;
-        Button   btnPretty2, btnPretty4, btnTabs, btnMinified, btnTree;
+        Button   btnPretty2, btnPretty4, btnTabs, btnMinified, btnTree,
+                 btnYaml, btnPaths, btnSchema, btnTable;
 
-        enum Style { Pretty2, Pretty4, Tabs, Minified, Tree }
+        enum Style { Pretty2, Pretty4, Tabs, Minified, Tree, Yaml, Paths, Schema, Table }
         Style currentStyle = Style.Pretty2;
+
+        JsonParser.JsonNode parsedRoot;      // lazy-parsed on first use
+        bool                parseAttempted;  // so we only try once; errors surface per-style
 
         public JsonPreviewDialog(string title, string json, string suggestedFileName, string initialDir)
         {
@@ -67,19 +71,28 @@ namespace ClarionDctAddin
                 Text = title
             };
 
-            var toolbar = new Panel { Dock = DockStyle.Top, Height = 42, BackColor = BgColor, Padding = new Padding(16, 8, 16, 4) };
+            var toolbar = new Panel { Dock = DockStyle.Top, Height = 76, BackColor = BgColor, Padding = new Padding(16, 8, 16, 4) };
             var lblStyle = new Label { Text = "View:", Left = 0, Top = 10, AutoSize = true, Font = new Font("Segoe UI", 9F) };
-            btnPretty2  = StyleButton("Pretty (2 sp)",  Style.Pretty2,   44);
-            btnPretty4  = StyleButton("Pretty (4 sp)",  Style.Pretty4,   162);
-            btnTabs     = StyleButton("Tabs",           Style.Tabs,      280);
-            btnMinified = StyleButton("Minified",       Style.Minified,  370);
-            btnTree     = StyleButton("Tree",           Style.Tree,      480);
+            btnPretty2  = StyleButton("Pretty (2 sp)",  Style.Pretty2,   44,  4);
+            btnPretty4  = StyleButton("Pretty (4 sp)",  Style.Pretty4,   160, 4);
+            btnTabs     = StyleButton("Tabs",           Style.Tabs,      276, 4);
+            btnMinified = StyleButton("Minified",       Style.Minified,  366, 4);
+            btnTree     = StyleButton("Tree",           Style.Tree,      476, 4);
+            // Row 2: structured views
+            btnTable    = StyleButton("Table",          Style.Table,     44,  38);
+            btnYaml     = StyleButton("YAML",           Style.Yaml,      140, 38);
+            btnPaths    = StyleButton("Path list",      Style.Paths,     236, 38);
+            btnSchema   = StyleButton("Schema",         Style.Schema,    340, 38);
             toolbar.Controls.Add(lblStyle);
             toolbar.Controls.Add(btnPretty2);
             toolbar.Controls.Add(btnPretty4);
             toolbar.Controls.Add(btnTabs);
             toolbar.Controls.Add(btnMinified);
             toolbar.Controls.Add(btnTree);
+            toolbar.Controls.Add(btnTable);
+            toolbar.Controls.Add(btnYaml);
+            toolbar.Controls.Add(btnPaths);
+            toolbar.Controls.Add(btnSchema);
 
             stats = new Label
             {
@@ -131,12 +144,23 @@ namespace ClarionDctAddin
             CancelButton = btnClose;
         }
 
-        Button StyleButton(string text, Style style, int left)
+        Button StyleButton(string text, Style style, int left, int top)
         {
-            var width = style == Style.Tree ? 80 : (style == Style.Tabs ? 80 : (style == Style.Minified ? 100 : 110));
+            int width;
+            switch (style)
+            {
+                case Style.Tree:     width = 80;  break;
+                case Style.Tabs:     width = 80;  break;
+                case Style.Minified: width = 100; break;
+                case Style.Table:    width = 90;  break;
+                case Style.Yaml:     width = 90;  break;
+                case Style.Paths:    width = 100; break;
+                case Style.Schema:   width = 90;  break;
+                default:             width = 110; break;
+            }
             var b = new Button
             {
-                Text = text, Left = left, Top = 4, Width = width, Height = 28,
+                Text = text, Left = left, Top = top, Width = width, Height = 28,
                 FlatStyle = FlatStyle.System, Font = new Font("Segoe UI", 9F)
             };
             b.Click += delegate { ApplyStyle(style); };
@@ -160,10 +184,14 @@ namespace ClarionDctAddin
                     string formatted;
                     switch (style)
                     {
-                        case Style.Pretty2:  formatted = JsonFormatter.Pretty(originalJson, "  "); break;
+                        case Style.Pretty2:  formatted = JsonFormatter.Pretty(originalJson, "  ");   break;
                         case Style.Pretty4:  formatted = JsonFormatter.Pretty(originalJson, "    "); break;
-                        case Style.Tabs:     formatted = JsonFormatter.Pretty(originalJson, "\t"); break;
-                        case Style.Minified: formatted = JsonFormatter.Minified(originalJson); break;
+                        case Style.Tabs:     formatted = JsonFormatter.Pretty(originalJson, "\t");   break;
+                        case Style.Minified: formatted = JsonFormatter.Minified(originalJson);       break;
+                        case Style.Yaml:     formatted = RenderFromParsed(JsonViewTransforms.ToYaml);     break;
+                        case Style.Paths:    formatted = RenderFromParsed(JsonViewTransforms.ToPathList); break;
+                        case Style.Schema:   formatted = RenderFromParsed(JsonViewTransforms.ToSchema);   break;
+                        case Style.Table:    formatted = RenderFromParsed(JsonViewTransforms.ToTable);    break;
                         default:             formatted = originalJson; break;
                     }
                     txtOutput.Text = formatted;
@@ -176,6 +204,22 @@ namespace ClarionDctAddin
                 HighlightActive();
             }
             finally { Cursor = Cursors.Default; }
+        }
+
+        string RenderFromParsed(Func<JsonParser.JsonNode, string> render)
+        {
+            EnsureParsed();
+            if (parsedRoot == null) return "<!-- failed to parse original JSON; see Pretty view -->";
+            try { return render(parsedRoot); }
+            catch (Exception ex) { return "<!-- render failed: " + ex.Message + " -->"; }
+        }
+
+        void EnsureParsed()
+        {
+            if (parseAttempted) return;
+            parseAttempted = true;
+            try { parsedRoot = JsonParser.Parse(originalJson); }
+            catch { parsedRoot = null; }
         }
 
         string StatsForCurrent()
@@ -201,17 +245,25 @@ namespace ClarionDctAddin
             tree.Nodes.Clear();
             try
             {
-                var root = JsonParser.Parse(originalJson);
-                var rootNode = tree.Nodes.Add(DescribeRoot(root));
-                rootNode.Tag = root;
-                AppendChildren(rootNode, root);
-                rootNode.Expand();
-                if (rootNode.Nodes.Count > 0 && rootNode.Nodes.Count <= 20) rootNode.ExpandAll();
-                else if (rootNode.Nodes.Count > 0) rootNode.Nodes[0].EnsureVisible();
+                EnsureParsed();
+                if (parsedRoot == null)
+                {
+                    var err = tree.Nodes.Add("Parse error (see Pretty view for the raw JSON).");
+                    err.ForeColor = Color.FromArgb(160, 30, 30);
+                }
+                else
+                {
+                    var rootNode = tree.Nodes.Add(DescribeRoot(parsedRoot));
+                    rootNode.Tag = parsedRoot;
+                    AppendChildren(rootNode, parsedRoot);
+                    rootNode.Expand();
+                    if (rootNode.Nodes.Count > 0 && rootNode.Nodes.Count <= 20) rootNode.ExpandAll();
+                    else if (rootNode.Nodes.Count > 0) rootNode.Nodes[0].EnsureVisible();
+                }
             }
             catch (Exception ex)
             {
-                var err = tree.Nodes.Add("Parse error: " + ex.Message);
+                var err = tree.Nodes.Add("Tree render error: " + ex.Message);
                 err.ForeColor = Color.FromArgb(160, 30, 30);
             }
             tree.EndUpdate();
@@ -335,6 +387,10 @@ namespace ClarionDctAddin
                 case Style.Tabs:     return "pretty, tab indent";
                 case Style.Minified: return "minified (single line)";
                 case Style.Tree:     return "tree";
+                case Style.Yaml:     return "YAML";
+                case Style.Paths:    return "path list (flattened)";
+                case Style.Schema:   return "schema (types only)";
+                case Style.Table:    return "table (largest array-of-objects)";
                 default:             return "?";
             }
         }
@@ -346,6 +402,10 @@ namespace ClarionDctAddin
             SetActive(btnTabs,     currentStyle == Style.Tabs);
             SetActive(btnMinified, currentStyle == Style.Minified);
             SetActive(btnTree,     currentStyle == Style.Tree);
+            SetActive(btnTable,    currentStyle == Style.Table);
+            SetActive(btnYaml,     currentStyle == Style.Yaml);
+            SetActive(btnPaths,    currentStyle == Style.Paths);
+            SetActive(btnSchema,   currentStyle == Style.Schema);
         }
 
         static void SetActive(Button b, bool active)

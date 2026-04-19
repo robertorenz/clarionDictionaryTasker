@@ -246,33 +246,62 @@ namespace ClarionDctAddin
                 return;
             }
 
-            if (lv.SelectedItems.Count == 1)
+            SafeExport(delegate
             {
-                var t = lv.SelectedItems[0].Tag;
-                var json = JsonExporter.TableJson(t);
-                var tableName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "table";
-                ShowJson("JSON export - table " + tableName, tableName + ".json", json);
-            }
-            else
-            {
-                var selected = lv.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).ToList();
-                var json = JsonExporter.TablesJson(
-                    DictModel.GetDictionaryName(dict),
-                    DictModel.GetDictionaryFileName(dict),
-                    selected);
-                ShowJson("JSON export - " + selected.Count + " selected tables",
-                    DictModel.GetDictionaryName(dict) + "-selected.json", json);
-            }
+                if (lv.SelectedItems.Count == 1)
+                {
+                    var t = lv.SelectedItems[0].Tag;
+                    var json = JsonExporter.TableJson(t);
+                    var tableName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "table";
+                    ShowJson("JSON export - table " + tableName, tableName + ".json", json);
+                }
+                else
+                {
+                    var selected = lv.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).ToList();
+                    var json = JsonExporter.TablesJson(
+                        DictModel.GetDictionaryName(dict),
+                        DictModel.GetDictionaryFileName(dict),
+                        selected);
+                    ShowJson("JSON export - " + selected.Count + " selected tables",
+                        DictModel.GetDictionaryName(dict) + "-selected.json", json);
+                }
+            });
         }
 
         void ExportAll()
         {
-            var json = JsonExporter.TablesJson(
-                DictModel.GetDictionaryName(dict),
-                DictModel.GetDictionaryFileName(dict),
-                tables);
-            ShowJson("JSON export - " + DictModel.GetDictionaryName(dict),
-                DictModel.GetDictionaryName(dict) + ".json", json);
+            SafeExport(delegate
+            {
+                var json = JsonExporter.TablesJson(
+                    DictModel.GetDictionaryName(dict),
+                    DictModel.GetDictionaryFileName(dict),
+                    tables);
+                ShowJson("JSON export - " + DictModel.GetDictionaryName(dict),
+                    DictModel.GetDictionaryName(dict) + ".json", json);
+            });
+        }
+
+        // Wraps a JSON-export action so any failure during reflection / render is reported
+        // as a modal error instead of propagating up and crashing the IDE.
+        void SafeExport(Action action)
+        {
+            var prev = Cursor;
+            Cursor = Cursors.WaitCursor;
+            try { action(); }
+            catch (OutOfMemoryException)
+            {
+                MessageBox.Show(this,
+                    "The JSON export ran out of memory.\r\n\r\n"
+                    + "Try exporting fewer tables at a time, or use SQL DDL / Markdown export instead.",
+                    "JSON export", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    "JSON export failed.\r\n\r\n" + ex.GetType().Name + ": " + ex.Message,
+                    "JSON export", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally { Cursor = prev; }
         }
 
         void ShowJson(string title, string suggestedName, string json)
