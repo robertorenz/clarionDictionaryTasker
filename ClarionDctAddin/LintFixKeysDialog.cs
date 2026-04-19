@@ -113,17 +113,20 @@ namespace ClarionDctAddin
             cbStyle.Items.Add("idx_snake");
             cbStyle.Items.Add("Key only (no owner)");
             cbStyle.Items.Add("Owner prefix + key as-is");
-            cbStyle.SelectedIndex = 0;
+            cbStyle.SelectedIndex = ClampIndex(Settings.FixKeysStyle, cbStyle.Items.Count);
+            cbStyle.SelectedIndexChanged += delegate { Settings.FixKeysStyle = cbStyle.SelectedIndex; };
             var lblOwner = new Label { Text = "Owner:", Left = 352, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
             cbOwner = new ComboBox { Left = 400, Top = 4, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
             cbOwner.Items.Add("Table name");
             cbOwner.Items.Add("Prefix");
-            cbOwner.SelectedIndex = 0;
+            cbOwner.SelectedIndex = ClampIndex(Settings.FixKeysOwner, cbOwner.Items.Count);
+            cbOwner.SelectedIndexChanged += delegate { Settings.FixKeysOwner = cbOwner.SelectedIndex; };
             var lblKey = new Label { Text = "Key:", Left = 532, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
             cbKey = new ComboBox { Left = 564, Top = 4, Width = 160, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
             cbKey.Items.Add("Label only  (after the ':')");
             cbKey.Items.Add("Full key name");
-            cbKey.SelectedIndex = 0;
+            cbKey.SelectedIndex = ClampIndex(Settings.FixKeysKey, cbKey.Items.Count);
+            cbKey.SelectedIndexChanged += delegate { Settings.FixKeysKey = cbKey.SelectedIndex; };
             btnAutoBlank = new Button { Text = "Fill blanks", Left = 736, Top = 2, Width = 100, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoBlank.Click += delegate { AutoFill(onlyBlanks: true); };
             btnAutoAll   = new Button { Text = "Fill all (overwrite)", Left = 842, Top = 2, Width = 150, Height = 30, FlatStyle = FlatStyle.System };
@@ -143,8 +146,12 @@ namespace ClarionDctAddin
             cbShow.Items.Add("All issues");
             cbShow.Items.Add("Blank ExternalName only");
             cbShow.Items.Add("Duplicated ExternalName only");
-            cbShow.SelectedIndex = 0;
-            cbShow.SelectedIndexChanged += delegate { RenderGrid(); };
+            cbShow.SelectedIndex = ClampIndex(Settings.FixKeysShow, cbShow.Items.Count);
+            cbShow.SelectedIndexChanged += delegate
+            {
+                Settings.FixKeysShow = cbShow.SelectedIndex;
+                RenderGrid();
+            };
             filterBar.Controls.Add(lblShow);
             filterBar.Controls.Add(cbShow);
 
@@ -228,6 +235,16 @@ namespace ClarionDctAddin
                     ? "No blank ExternalNames to fill."
                     : "No rows changed (values already match the chosen style).",
                     "Fix keys", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Clamp a persisted index to the current combo's item range — guards
+        // against a persisted value from an older version that had more options.
+        static int ClampIndex(int value, int itemCount)
+        {
+            if (itemCount <= 0) return 0;
+            if (value < 0) return 0;
+            if (value >= itemCount) return 0;
+            return value;
         }
 
         // Resolve the "owner" text based on the dropdown — prefix when the user

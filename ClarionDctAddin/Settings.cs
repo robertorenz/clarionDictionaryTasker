@@ -10,6 +10,10 @@ namespace ClarionDctAddin
     internal static class Settings
     {
         const string KeyPreferredDialect = "preferred_sql_dialect";
+        const string KeyFixKeysStyle     = "fix_keys_style";
+        const string KeyFixKeysOwner     = "fix_keys_owner";
+        const string KeyFixKeysKey       = "fix_keys_key";
+        const string KeyFixKeysShow      = "fix_keys_show";
 
         static readonly string DataDir =
             Path.Combine(
@@ -66,6 +70,22 @@ namespace ClarionDctAddin
             LoadCached()[key] = value;
             Persist();
         }
+
+        public static int GetInt(string key, int fallback)
+        {
+            int n;
+            return int.TryParse(Get(key, ""), out n) ? n : fallback;
+        }
+
+        public static void SetInt(string key, int value)
+        {
+            Set(key, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        public static int FixKeysStyle { get { return GetInt(KeyFixKeysStyle, 0); } set { SetInt(KeyFixKeysStyle, value); } }
+        public static int FixKeysOwner { get { return GetInt(KeyFixKeysOwner, 0); } set { SetInt(KeyFixKeysOwner, value); } }
+        public static int FixKeysKey   { get { return GetInt(KeyFixKeysKey,   0); } set { SetInt(KeyFixKeysKey,   value); } }
+        public static int FixKeysShow  { get { return GetInt(KeyFixKeysShow,  0); } set { SetInt(KeyFixKeysShow,  value); } }
 
         public static SqlDdlGenerator.Dialect PreferredDialect
         {
