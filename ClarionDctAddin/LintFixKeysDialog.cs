@@ -27,11 +27,12 @@ namespace ClarionDctAddin
         DataGridView grid;
         Label        lblSummary;
         Button       btnApply, btnRefresh, btnAutoBlank, btnAutoAll;
-        ComboBox     cbStyle, cbShow;
+        ComboBox     cbStyle, cbShow, cbOwner;
         List<Row>    rows = new List<Row>();
         Dictionary<string, List<string>> otherOwners;   // ExternalName -> owners NOT in scope
 
-        enum ShowFilter { All, BlankOnly, DuplicatesOnly }
+        enum ShowFilter  { All, BlankOnly, DuplicatesOnly }
+        enum OwnerSource { TableName, Prefix }
 
         enum NamingStyle
         {
@@ -48,7 +49,7 @@ namespace ClarionDctAddin
         sealed class Row
         {
             public object Key;
-            public string Table, Name, KeyType, Components;
+            public string Table, Prefix, Name, KeyType, Components;
             public string Unique, Primary;
             public string OrigExternalName;
             public string ExternalName;
@@ -102,22 +103,29 @@ namespace ClarionDctAddin
 
             var autoBar = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = BgColor, Padding = new Padding(16, 8, 16, 4) };
             var lblStyle = new Label { Text = "Auto-fill style:", Left = 0, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
-            cbStyle = new ComboBox { Left = 100, Top = 4, Width = 260, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
-            cbStyle.Items.Add("UPPER_SNAKE    — CLIENTES_GUIDKEY");
-            cbStyle.Items.Add("lower_snake    — clientes_guidkey");
-            cbStyle.Items.Add("Camel_Snake    — Clientes_guidkey");
-            cbStyle.Items.Add("Pascal         — ClientesGuidkey");
-            cbStyle.Items.Add("camel          — clientesGuidkey");
-            cbStyle.Items.Add("idx_snake      — idx_clientes_guidkey");
-            cbStyle.Items.Add("Key only       — guidkey");
-            cbStyle.Items.Add("Table prefix   — CLIENTES_<key as-is>");
+            cbStyle = new ComboBox { Left = 100, Top = 4, Width = 240, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
+            cbStyle.Items.Add("UPPER_SNAKE");
+            cbStyle.Items.Add("lower_snake");
+            cbStyle.Items.Add("Camel_Snake");
+            cbStyle.Items.Add("Pascal");
+            cbStyle.Items.Add("camel");
+            cbStyle.Items.Add("idx_snake");
+            cbStyle.Items.Add("Key only (no owner)");
+            cbStyle.Items.Add("Owner prefix + key as-is");
             cbStyle.SelectedIndex = 0;
-            btnAutoBlank = new Button { Text = "Fill blanks", Left = 372, Top = 2, Width = 110, Height = 30, FlatStyle = FlatStyle.System };
+            var lblOwner = new Label { Text = "Owner:", Left = 352, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            cbOwner = new ComboBox { Left = 400, Top = 4, Width = 130, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
+            cbOwner.Items.Add("Table name");
+            cbOwner.Items.Add("Prefix");
+            cbOwner.SelectedIndex = 0;
+            btnAutoBlank = new Button { Text = "Fill blanks", Left = 540, Top = 2, Width = 110, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoBlank.Click += delegate { AutoFill(onlyBlanks: true); };
-            btnAutoAll   = new Button { Text = "Fill all (overwrite)", Left = 488, Top = 2, Width = 160, Height = 30, FlatStyle = FlatStyle.System };
+            btnAutoAll   = new Button { Text = "Fill all (overwrite)", Left = 656, Top = 2, Width = 160, Height = 30, FlatStyle = FlatStyle.System };
             btnAutoAll.Click += delegate { AutoFill(onlyBlanks: false); };
             autoBar.Controls.Add(lblStyle);
             autoBar.Controls.Add(cbStyle);
+            autoBar.Controls.Add(lblOwner);
+            autoBar.Controls.Add(cbOwner);
             autoBar.Controls.Add(btnAutoBlank);
             autoBar.Controls.Add(btnAutoAll);
 
@@ -189,14 +197,16 @@ namespace ClarionDctAddin
 
         void AutoFill(bool onlyBlanks)
         {
-            var style = (NamingStyle)cbStyle.SelectedIndex;
+            var style       = (NamingStyle)cbStyle.SelectedIndex;
+            var ownerSource = (OwnerSource)cbOwner.SelectedIndex;
             int touched = 0;
             // Iterate the full rows list so offscreen rows (filtered out of the
             // grid right now) still get auto-filled.
             foreach (var r in rows)
             {
                 if (onlyBlanks && !string.IsNullOrWhiteSpace(r.ExternalName)) continue;
-                var suggested = MakeName(style, r.Table, r.Name);
+                var ownerSegment = OwnerSegment(r, ownerSource);
+                var suggested = MakeName(style, ownerSegment, r.Name);
                 if (string.Equals(suggested, r.ExternalName, StringComparison.Ordinal)) continue;
                 r.ExternalName = suggested;
                 touched++;
@@ -208,6 +218,21 @@ namespace ClarionDctAddin
                     ? "No blank ExternalNames to fill."
                     : "No rows changed (values already match the chosen style).",
                     "Fix keys", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Resolve the "owner" text based on the dropdown — prefix when the user
+        // asked for it (falling back to table name if the table has no prefix),
+        // otherwise the table name.
+        static string OwnerSegment(Row r, OwnerSource src)
+        {
+            if (src == OwnerSource.Prefix)
+            {
+                // Clarion prefixes sometimes carry a trailing ':' (used in field refs
+                // like CLI:NAME). Strip it so it doesn't show up in the index name.
+                var p = (r.Prefix ?? "").TrimEnd(':');
+                if (!string.IsNullOrWhiteSpace(p)) return p;
+            }
+            return r.Table ?? "";
         }
 
         static string MakeName(NamingStyle style, string table, string key)
@@ -404,6 +429,7 @@ namespace ClarionDctAddin
                     {
                         Key = k,
                         Table = tName,
+                        Prefix = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "",
                         Name = kName,
                         KeyType = DictModel.AsString(DictModel.GetProp(k, "KeyType")) ?? "Key",
                         Components = string.IsNullOrEmpty(sig) ? "" : sig.Replace(",", " + "),
