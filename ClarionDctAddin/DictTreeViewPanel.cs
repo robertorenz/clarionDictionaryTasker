@@ -157,10 +157,18 @@ namespace ClarionDctAddin
                 if (table == null) return;
                 using (var dlg = new LintReportDialog(dict, table)) dlg.ShowDialog(FindForm());
             };
+            var miFix = new ToolStripMenuItem("Fix fields...");
+            miFix.Click += delegate
+            {
+                var table = GetContextTable();
+                if (table == null) return;
+                using (var dlg = new LintFixItDialog(dict, table)) dlg.ShowDialog(FindForm());
+            };
             ctx.Items.Add(miSqlDdl);
             ctx.Items.Add(miFields);
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add(miLint);
+            ctx.Items.Add(miFix);
 
             ctx.Opening += delegate(object s, System.ComponentModel.CancelEventArgs e)
             {

@@ -1175,6 +1175,10 @@ namespace ClarionDctAddin
             {
                 using (var dlg = new LintReportDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
             });
+            ctx.Items.Add("Fix fields...", null, delegate
+            {
+                using (var dlg = new LintFixItDialog(dict, node.Table)) dlg.ShowDialog(FindForm());
+            });
             ctx.Show(canvas, screenRelToCanvas);
         }
 

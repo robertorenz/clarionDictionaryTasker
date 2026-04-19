@@ -124,6 +124,7 @@ namespace ClarionDctAddin
             ctx.Items.Add("Copy table name",        null, delegate { CopySelectedName(); });
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("Lint this table...",     null, delegate { LintSelectedTable(); });
+            ctx.Items.Add("Fix fields...",          null, delegate { FixFieldsForSelected(); });
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add("More dictionary tools...", null, delegate { OpenToolsDialog(); });
             lv.ContextMenuStrip = ctx;
@@ -206,6 +207,18 @@ namespace ClarionDctAddin
             }
             var table = lv.SelectedItems[0].Tag;
             using (var dlg = new SqlDdlDialog(dict, table)) dlg.ShowDialog(this);
+        }
+
+        void FixFieldsForSelected()
+        {
+            if (lv.SelectedItems.Count == 0)
+            {
+                MessageBox.Show(this, "Select a table first.", "Fix fields",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var table = lv.SelectedItems[0].Tag;
+            using (var dlg = new LintFixItDialog(dict, table)) dlg.ShowDialog(this);
         }
 
         void LintSelectedTable()

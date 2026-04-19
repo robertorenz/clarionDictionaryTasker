@@ -92,8 +92,15 @@ namespace ClarionDctAddin
             btnClose.Click += delegate { Close(); };
             var btnRescan = new Button { Text = "Rescan", Width = 120, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
             btnRescan.Click += delegate { RunScan(); };
+            var btnFix = new Button { Text = "Fix fields...", Width = 140, Height = 32, Dock = DockStyle.Right, FlatStyle = FlatStyle.System };
+            btnFix.Click += delegate
+            {
+                using (var dlg = new LintFixItDialog(dict, singleTable)) dlg.ShowDialog(this);
+                RunScan();
+            };
             btnPanel.Controls.Add(btnClose);
             btnPanel.Controls.Add(btnRescan);
+            btnPanel.Controls.Add(btnFix);
 
             Controls.Add(lv);
             Controls.Add(btnPanel);
