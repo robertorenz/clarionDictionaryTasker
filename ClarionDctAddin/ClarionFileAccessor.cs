@@ -5,38 +5,60 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Xml;
 
 namespace ClarionDctAddin
 {
-    // Opens a Clarion data file (TPS initially) via Clarion's own runtime —
-    // SoftVelocity.Clarion.FileIO.Clarion.CFile — using reflection so we stay
-    // free of compile-time deps on the SoftVelocity assemblies.
+    // Opens a Clarion data file (TPS only in this version) via Clarion's own
+    // runtime — SoftVelocity.Clarion.FileIO.Clarion.CFile — using reflection
+    // so we stay free of compile-time deps on the SoftVelocity assemblies.
     //
-    // Architecture note: Clarion's file-driver DLLs (ClaTPS.dll, etc.) are
-    // 32-bit native. This code therefore only works from inside the 32-bit
-    // Clarion IDE process; outside-process probing will hit BadImageFormatException
-    // and that's fine — we only call it from the add-in DLL that's loaded by
-    // Clarion at runtime.
+    // Pipeline (reverse-engineered from CFile.SetupFile / ToXML / FieldToXML
+    // IL + CLegacy dispatcher ctor):
     //
-    // Strategy is deliberately defensive: every step is wrapped, each attempt is
-    // logged to the result log, and the OpenForRead entry point never throws —
-    // it returns a ReadResult with success / diagnostic info so the UI can show
-    // the user exactly which reflection step failed if any.
+    //   1. Emit a dynamic CFile subclass with abstract-method stubs plus a
+    //      forwarding 4-arg ctor(Byte[], ClaString, ClaString, ClaString).
+    //   2. Instantiate it via that ctor (buffer, name, owner, driver). That's
+    //      the shape Clarion-generated code uses.
+    //   3. Call SetupFile(XmlDocument, 0) with a schema XML built from the
+    //      DCT field list, matching the dialect that CFile's own FieldToXML /
+    //      MemoToXML / KeyToXML emit. SetupFile rebuilds m_pClaFile with a
+    //      real record layout and rewires m_pBuffer to wrap rec_buf.
+    //   4. Write the driver name ("TOPSPEED\0") into the native sbyte*
+    //      m_sDrvName buffer (it's what CDriver.GetDriver hashes on).
+    //   5. Open(0x42h) → the CLegacy dispatcher routes through IdeRtlCall
+    //      into ClarionDrv.dll.
+    //
+    // *** Known ceiling ***
+    //
+    // Step 5 succeeds without exception but the native runtime then refuses
+    // to populate rec_buf — Bytes() and Records() both return 0. This is
+    // because CLegacy communicates with managed code via an m_pEval callback
+    // (CLegacy.GetValue) that Clarion-generated subclasses fulfill via the
+    // abstract __CLA_Retrieve / __CLA_Store / __CLA_GetRecord overrides. Our
+    // stubbed no-op abstracts don't satisfy the contract, so native code
+    // silently skips record marshaling. Getting past this would require
+    // re-implementing the Clarion code generator's CGroup binding — out of
+    // scope here. We detect the failure cleanly and route users to
+    // "Embed TopScan" / "Open in TopScan" for TPS viewing.
     internal static class ClarionFileAccessor
     {
         public sealed class ReadResult
         {
             public bool         Ok;
             public string       Error;
-            public List<object> Rows          = new List<object>();   // one entry per row, shape below
-            public List<string> ColumnLabels  = new List<string>();   // DDField labels in the order they're read
+            public List<object> Rows          = new List<object>();   // List<List<object>> aligned with ColumnLabels
+            public List<string> ColumnLabels  = new List<string>();
             public List<string> ColumnTypes   = new List<string>();
             public List<string> Log           = new List<string>();
             public int          TotalScanned;
         }
 
-        // Each "row" is a List<object> of values aligned with ColumnLabels/Types.
+        // Clarion open mode: ReadWrite + DenyNone. Generated ABC apps use
+        // this by default; mode 0 is rejected by the native driver.
+        const int CLARION_OPEN_MODE = 0x42;
 
         public static ReadResult OpenForRead(object dict, object table, int maxRows)
         {
@@ -63,23 +85,17 @@ namespace ClarionDctAddin
                 return;
             }
 
-            // 1. Resolve the physical file path.
             string path = ResolvePath(dict, table, r);
             r.Log.Add("path=" + path);
-            if (string.IsNullOrEmpty(path))
-            {
-                r.Ok = false;
-                r.Error = "Could not resolve a physical file path for this table.";
-                return;
-            }
-            if (!File.Exists(path))
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
             {
                 r.Ok = false;
                 r.Error = "File not found on disk: " + path;
                 return;
             }
 
-            // 2. Build the DDField catalogue up front so we know the columns.
+            // Column metadata for the grid (always populated so SQL / TPS
+            // both render the same shape).
             var fields = new List<object>();
             var fieldsEnum = DictModel.GetProp(table, "Fields") as IEnumerable;
             if (fieldsEnum != null) foreach (var f in fieldsEnum) if (f != null) fields.Add(f);
@@ -89,8 +105,7 @@ namespace ClarionDctAddin
                 r.ColumnTypes .Add(DictModel.AsString(DictModel.GetProp(f, "DataType")) ?? "");
             }
 
-            // 3. Load Clarion's runtime FileIO assembly + the Runtime.Classes
-            //    tree that carries the per-driver CFile subclasses.
+            // Load the Clarion .NET runtime assemblies.
             var fileIo = LoadClarionAssembly("SoftVelocity.Clarion.FileIO.dll", r);
             if (fileIo == null) { r.Ok = false; r.Error = "Could not load SoftVelocity.Clarion.FileIO.dll."; return; }
             LoadClarionAssembly("SoftVelocity.Clarion.Runtime.Classes.dll",   r);
@@ -98,103 +113,109 @@ namespace ClarionDctAddin
             LoadClarionAssembly("SoftVelocity.Clarion.Runtime.Procedures.dll", r);
 
             var cfileBaseType = fileIo.GetType("Clarion.CFile");
-            if (cfileBaseType == null) { r.Ok = false; r.Error = "Clarion.CFile type not found in FileIO.dll."; return; }
-            r.Log.Add("CFile base: " + cfileBaseType.AssemblyQualifiedName);
+            if (cfileBaseType == null) { r.Ok = false; r.Error = "Clarion.CFile type not found."; return; }
 
-            // CFile is abstract; every concrete subclass in the Clarion assemblies is
-            // schema-bound (Clarion's own dict-storage types). To get a generic reader
-            // we EMIT our own concrete subclass at runtime: inherits CFile, stubs every
-            // abstract member with a default-return body, leaves non-abstract Open /
-            // Next / Close etc. inherited from the base.
-            LogAbstractMembers(cfileBaseType, r);
-            var cfileType = EmitDynamicCFileSubclass(cfileBaseType, r);
-            if (cfileType == null)
-            {
-                r.Ok = false;
-                r.Error = "Could not emit a dynamic CFile subclass — the abstract surface on this Clarion build is larger than the stub generator handles.";
-                return;
-            }
-            r.Log.Add("using emitted concrete type: " + cfileType.FullName);
-
-            // 4. Compute a record buffer sized to the sum of DDField sizes. This
-            //    is our best-effort layout — native Clarion carries its own
-            //    internal padding which we don't model. If reading the buffer
-            //    back produces garbage we know this is where to look.
-            int recordSize;
-            var offsets = BuildFieldOffsets(fields, out recordSize, r);
-
-            byte[] record = new byte[Math.Max(1, recordSize)];
-            r.Log.Add("record size: " + recordSize + " bytes");
-
-            // 5. Instantiate the emitted concrete CFile subclass. Since CFile
-            //    only has a parameterless ctor, and our emitted type inherits
-            //    that, default-ctor is the only valid path for instantiation.
-            object cfile = null;
             var claStringType = ResolveClaStringType(fileIo, r);
-            LogCtors(cfileBaseType, "CFile",     r);
-            if (claStringType != null) LogCtors(claStringType, "ClaString", r);
-            LogInstanceMembers(cfileBaseType, r);
+            if (claStringType == null) { r.Ok = false; r.Error = "Clarion.ClaString type not found."; return; }
 
+            // Emit our concrete subclass with abstract stubs + forwarding ctor.
+            var cfileType = EmitDynamicCFileSubclass(cfileBaseType, claStringType, r);
+            if (cfileType == null) { r.Ok = false; r.Error = "Could not emit a dynamic CFile subclass."; return; }
+
+            // Record-size placeholder (SetupFile discards this and builds a
+            // real buffer from the XML schema).
+            int recordSize;
+            var offsets = BuildFieldOffsets(fields, out recordSize);
+            byte[] seedBuffer = new byte[Math.Max(1, recordSize)];
+
+            // Instantiate via 4-arg ctor(buffer, name, owner, driver).
+            var nameCla  = WrapClaString(claStringType, path,   r);
+            var ownerCla = WrapClaString(claStringType, "",     r);
+            var drvCla   = WrapClaString(claStringType, driver, r);
+            if (nameCla == null || ownerCla == null || drvCla == null)
+            { r.Ok = false; r.Error = "Could not wrap ClaString for ctor arguments."; return; }
+
+            var ctor4 = cfileType.GetConstructor(new[] { typeof(byte[]), claStringType, claStringType, claStringType });
+            if (ctor4 == null) { r.Ok = false; r.Error = "4-arg CFile ctor not available on emitted subclass."; return; }
+
+            object cfile;
             try
             {
-                cfile = Activator.CreateInstance(cfileType);
-                r.Log.Add("instantiated emitted subclass ok");
+                cfile = ctor4.Invoke(new object[] { seedBuffer, nameCla, ownerCla, drvCla });
+                r.Log.Add("instantiated CFile via 4-arg ctor (buffer, name, owner, driver)");
             }
             catch (Exception ex)
             {
                 var inner = ex.InnerException ?? ex;
-                r.Log.Add("CreateInstance failed: " + inner.GetType().Name + " - " + inner.Message);
-                r.Ok = false;
-                r.Error = "Could not instantiate the emitted CFile subclass: " + inner.Message;
+                r.Ok = false; r.Error = "CFile ctor failed: " + inner.Message;
                 return;
             }
 
-            // 6. Configure the instance with driver + file path. Clarion-generated
-            //    CFile subclasses do this in their ctor via direct field / method
-            //    calls rather than properties; we replicate by trying every
-            //    plausible member shape.
-            bool configOk = ConfigureCFile(cfile, cfileBaseType, claStringType, driver, path, record, r);
-            if (!configOk)
-            {
-                r.Ok = false;
-                r.Error = "Could not set name / driver on the CFile — see the instance-members dump in the log to find the right member.";
-                return;
-            }
+            // Inject the schema via SetupFile. Without this step, the TPS
+            // driver opens the file but m_pClaFile has no layout and rec_buf
+            // stays empty.
+            var schemaXml = BuildClarionSchemaXml(table, path, driver, r);
+            if (!InvokeSetupFile(cfile, cfileBaseType, schemaXml, r))
+            { r.Ok = false; r.Error = "SetupFile(xmlDoc, 0) failed — see log."; return; }
 
-            // 6. Open / iterate / close. Open() with no args is the typical Clarion flow.
-            var openMethod  = FindMethod(cfileType, "Open",  Type.EmptyTypes) ?? FindMethod(cfileType, "Open",  new[] { typeof(short) }) ?? FindMethod(cfileType, "Open", new[] { typeof(int) });
+            // Populate the native sbyte* m_sDrvName buffer so CDriver.GetDriver's
+            // `new String(cfile.DrvName).ToUpper()` hashes to a real driver.
+            PopulateDrvNamePointer(cfile, cfileBaseType, driver, r);
+
+            // Open / iterate / close.
+            var openMethod  = FindMethod(cfileType, "Open",  Type.EmptyTypes) ?? FindMethod(cfileType, "Open", new[] { typeof(int) });
             var closeMethod = FindMethod(cfileType, "Close", Type.EmptyTypes);
             var setMethod   = FindMethod(cfileType, "Set",   Type.EmptyTypes);
             var nextMethod  = FindMethod(cfileType, "Next",  Type.EmptyTypes);
-
             if (openMethod == null || nextMethod == null)
-            {
-                r.Ok = false;
-                r.Error = "CFile is missing Open() or Next() methods; can't iterate.";
-                r.Log.Add("openMethod=" + openMethod + ", nextMethod=" + nextMethod);
-                return;
-            }
+            { r.Ok = false; r.Error = "CFile is missing Open() or Next() methods."; return; }
 
             try
             {
-                Invoke(openMethod, cfile, "Open");
-                r.Log.Add("Open() ok");
-                if (setMethod != null) { Invoke(setMethod, cfile, "Set"); r.Log.Add("Set() ok"); }
+                InvokeOpen(openMethod, cfile, r);
 
+                // After Open, the Clarion runtime routes through CLegacy →
+                // native ClarionDrv.dll. If the native runtime is satisfied,
+                // Bytes()/Records() return real values. If our callback
+                // contract falls short, both silently return 0 — detect that
+                // cleanly rather than iterating empty records.
+                int drvBytes = SafeIntCall(cfileType, cfile, "Bytes");
+                int drvRecords = SafeIntCall(cfileType, cfile, "Records");
+                r.Log.Add("driver Bytes=" + drvBytes + "  Records=" + drvRecords);
+
+                if (drvBytes <= 0 || drvRecords <= 0)
+                {
+                    r.Ok = false;
+                    r.Error = "Inline TPS read: native runtime opened the file but won't populate records "
+                        + "(the Clarion callback contract for emitted subclasses isn't fully satisfied). "
+                        + "Use 'Open in TopScan' or 'Embed TopScan' to view this table.";
+                    return;
+                }
+
+                if (setMethod != null) Invoke(setMethod, cfile);
+
+                // Native rec_buf / rec_len live inside m_pClaFile's ClaFile*
+                // struct (SetupFile just set them). The TPS driver refills
+                // rec_buf on every Next().
+                IntPtr recBufPtr; int recLen;
+                if (!ResolveNativeRecordBuffer(cfile, cfileBaseType, out recBufPtr, out recLen, r))
+                { r.Ok = false; r.Error = "Could not resolve rec_buf from m_pClaFile."; return; }
+
+                byte[] nativeRecord = new byte[Math.Max(1, recLen)];
                 for (int i = 0; i < maxRows; i++)
                 {
                     var ret = nextMethod.Invoke(cfile, null);
-                    // Clarion's Next() typically returns 0 on success, non-zero on EOF/error.
                     int code = 0;
                     if (ret != null) try { code = Convert.ToInt32(ret); } catch { }
                     r.TotalScanned++;
                     if (code != 0) { r.Log.Add("Next() returned " + code + " at row " + (i + 1)); break; }
 
-                    // Record buffer should now hold the current row. Project into values.
+                    Marshal.Copy(recBufPtr, nativeRecord, 0, recLen);
+
                     var row = new List<object>(fields.Count);
                     for (int fi = 0; fi < fields.Count; fi++)
                     {
-                        try { row.Add(UnpackField(record, offsets[fi], fields[fi])); }
+                        try { row.Add(UnpackField(nativeRecord, offsets[fi], fields[fi])); }
                         catch (Exception ex) { row.Add("<err:" + ex.GetType().Name + ">"); }
                     }
                     r.Rows.Add(row);
@@ -211,52 +232,36 @@ namespace ClarionDctAddin
         static bool IsSupportedDriver(string driver)
         {
             var d = (driver ?? "").ToUpperInvariant();
-            // Start with TPS — the user's stated target. Others can be unblocked
-            // later by easing this predicate; the rest of the pipeline is
-            // driver-agnostic since CFile abstracts over all Clarion drivers.
             return d == "TOPSPEED" || d == "TPS" || d == "TOPSCAN" || d == "TPSCAN";
         }
 
         static string ResolvePath(object dict, object table, ReadResult r)
         {
             var full = DictModel.AsString(DictModel.GetProp(table, "FullPathName")) ?? "";
-            if (!string.IsNullOrEmpty(full))
-            {
-                if (File.Exists(full)) return full;
-                r.Log.Add("FullPathName exists on table but file missing: " + full);
-            }
+            if (!string.IsNullOrEmpty(full) && File.Exists(full)) return full;
 
-            // Default file name — often just "clientes.tps" with no directory.
             var defName = DictModel.AsString(DictModel.GetProp(table, "DefaultFileName")) ?? "";
             var fallbackName = !string.IsNullOrEmpty(defName) ? defName : full;
-            if (string.IsNullOrEmpty(fallbackName)) fallbackName = (DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "table") + ".tps";
+            if (string.IsNullOrEmpty(fallbackName))
+                fallbackName = (DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "table") + ".tps";
 
-            // Look for the file next to the .DCT — that's the "same folder" case the user mentioned.
             var dctPath = DictModel.GetDictionaryFileName(dict);
             if (!string.IsNullOrEmpty(dctPath))
             {
                 var dctDir = Path.GetDirectoryName(dctPath);
                 if (!string.IsNullOrEmpty(dctDir))
                 {
-                    // Try literal join.
-                    var candidate1 = Path.Combine(dctDir, fallbackName);
-                    r.Log.Add("try " + candidate1);
-                    if (File.Exists(candidate1)) return candidate1;
-
-                    // Try just the bare file name in the dct dir.
-                    var candidate2 = Path.Combine(dctDir, Path.GetFileName(fallbackName));
-                    r.Log.Add("try " + candidate2);
-                    if (File.Exists(candidate2)) return candidate2;
+                    var c1 = Path.Combine(dctDir, fallbackName);
+                    if (File.Exists(c1)) return c1;
+                    var c2 = Path.Combine(dctDir, Path.GetFileName(fallbackName));
+                    if (File.Exists(c2)) return c2;
                 }
             }
-            return full; // caller verifies existence; this is only useful for the error message
+            return full;
         }
 
-        // Compute running byte offsets for each field in declaration order. Falls
-        // back to zeros if a field has no FieldSize we can parse. This is a naïve
-        // model — native Clarion may align certain types — but it's our starting
-        // point; we'll tune if/when reads come out garbled.
-        static int[] BuildFieldOffsets(IList<object> fields, out int recordSize, ReadResult r)
+        // Running byte offsets for each field in declaration order.
+        static int[] BuildFieldOffsets(IList<object> fields, out int recordSize)
         {
             var offsets = new int[fields.Count];
             int cursor = 0;
@@ -266,13 +271,9 @@ namespace ClarionDctAddin
                 cursor += LogicalFieldSize(fields[i]);
             }
             recordSize = cursor;
-            r.Log.Add("computed field offsets; last cursor=" + cursor);
             return offsets;
         }
 
-        // Map DDField metadata to a byte-size the record buffer needs to allow
-        // for. Strings take their FieldSize; numerics take a fixed width based on
-        // data type (Clarion LONG=4, SHORT=2, BYTE=1, REAL=8, DATE/TIME=4).
         static int LogicalFieldSize(object field)
         {
             var dt = (DictModel.AsString(DictModel.GetProp(field, "DataType")) ?? "").ToUpperInvariant();
@@ -280,24 +281,25 @@ namespace ClarionDctAddin
             int.TryParse(DictModel.AsString(DictModel.GetProp(field, "FieldSize")) ?? "0", out declared);
             switch (dt)
             {
-                case "BYTE":    return 1;
-                case "SHORT": case "USHORT":   return 2;
-                case "LONG":  case "ULONG":    return 4;
+                case "BYTE":                    return 1;
+                case "SHORT": case "USHORT":    return 2;
+                case "LONG":  case "ULONG":     return 4;
                 case "DATE":                    return 4;
                 case "TIME":                    return 4;
                 case "REAL":                    return 8;
                 case "SREAL":                   return 4;
                 case "DECIMAL": case "PDECIMAL":
-                    // Packed decimal: ceil((digits+1)/2). Declared size usually holds digits count.
                     return Math.Max(1, (declared + 1) / 2);
                 case "STRING": case "CSTRING": case "PSTRING":
                     return Math.Max(0, declared);
                 case "MEMO": case "BLOB":
-                    return 0;  // stored out of line; placeholder
+                    return 0;
                 default:
                     return Math.Max(0, declared);
             }
         }
+
+        // ---- Value unpacking ------------------------------------------------
 
         static object UnpackField(byte[] buf, int offset, object field)
         {
@@ -315,16 +317,11 @@ namespace ClarionDctAddin
                 case "ULONG":  return BitConverter.ToUInt32(buf, offset);
                 case "REAL":   return BitConverter.ToDouble(buf, offset);
                 case "SREAL":  return BitConverter.ToSingle(buf, offset);
-                case "DATE":
-                    int days = BitConverter.ToInt32(buf, offset);
-                    return ClarionDateToString(days);
-                case "TIME":
-                    int centi = BitConverter.ToInt32(buf, offset);
-                    return ClarionTimeToString(centi);
+                case "DATE":   return ClarionDateToString(BitConverter.ToInt32(buf, offset));
+                case "TIME":   return ClarionTimeToString(BitConverter.ToInt32(buf, offset));
                 case "STRING": case "CSTRING":
                     return ReadAsciiField(buf, offset, size, dt);
                 case "PSTRING":
-                    // Pascal string: first byte is length, rest is payload.
                     if (size <= 1) return "";
                     int plen = buf[offset];
                     if (plen > size - 1) plen = size - 1;
@@ -344,7 +341,6 @@ namespace ClarionDctAddin
             var s = Encoding.GetEncoding(1252).GetString(buf, offset, size);
             if (dataType == "CSTRING")
             {
-                // Null-terminated
                 var nul = s.IndexOf('\0');
                 if (nul >= 0) s = s.Substring(0, nul);
             }
@@ -357,7 +353,6 @@ namespace ClarionDctAddin
             {
                 int places;
                 int.TryParse(DictModel.AsString(DictModel.GetProp(field, "Places")) ?? "0", out places);
-                // Build digit string: each nibble is a digit, last nibble is sign.
                 var sb = new StringBuilder(size * 2);
                 for (int i = 0; i < size; i++)
                 {
@@ -371,7 +366,6 @@ namespace ClarionDctAddin
                 var negative = signNibble == 'D' || signNibble == 'B';
                 if (places > 0 && raw.Length > places)
                     raw = raw.Substring(0, raw.Length - places) + "." + raw.Substring(raw.Length - places);
-                // Trim leading zeros except the one before the decimal point.
                 int firstNonZero = 0;
                 while (firstNonZero < raw.Length - 1 && raw[firstNonZero] == '0' && raw[firstNonZero + 1] != '.') firstNonZero++;
                 raw = raw.Substring(firstNonZero);
@@ -380,12 +374,6 @@ namespace ClarionDctAddin
             catch { return "<decimal>"; }
         }
 
-        // Clarion dates are days since 28-Dec-1800 (with value 1 == 28-Dec-1800
-        // in some rigs, or offset-by-one in others). Using the common convention:
-        //   day 4 == 1-Jan-1801
-        //   day 58120 == 1-Jan-1960  (close to common reality)
-        // Empirically Clarion uses days since Dec 28, 1800 where day 1 = 1801-01-01.
-        // We use DateTime(1800,12,28) + days.
         static readonly DateTime ClarionEpoch = new DateTime(1800, 12, 28);
         static string ClarionDateToString(int days)
         {
@@ -397,7 +385,6 @@ namespace ClarionDctAddin
         static string ClarionTimeToString(int centiseconds)
         {
             if (centiseconds <= 0) return "";
-            // Clarion TIME is centiseconds since midnight + 1.
             var total = centiseconds - 1;
             if (total < 0) total = 0;
             int h  = total / 360000;      total -= h * 360000;
@@ -406,7 +393,7 @@ namespace ClarionDctAddin
             return string.Format("{0:D2}:{1:D2}:{2:D2}.{3:D2}", h, m, s, total);
         }
 
-        // ---- Reflection helpers ----
+        // ---- Assembly + type resolution ------------------------------------
 
         static Assembly LoadClarionAssembly(string fileName, ReadResult r)
         {
@@ -418,36 +405,31 @@ namespace ClarionDctAddin
             foreach (var p in cands)
             {
                 if (!File.Exists(p)) continue;
-                try
-                {
-                    var a = Assembly.LoadFrom(p);
-                    r.Log.Add("loaded " + fileName + " from " + p);
-                    return a;
-                }
-                catch (Exception ex) { r.Log.Add("loadFrom " + p + " failed: " + ex.GetType().Name + " - " + ex.Message); }
+                try { return Assembly.LoadFrom(p); }
+                catch (Exception ex) { r.Log.Add("LoadFrom " + p + " failed: " + ex.Message); }
             }
-
-            // Last resort: check already-loaded AppDomain assemblies (Clarion preloads most of these).
             var name = Path.GetFileNameWithoutExtension(fileName);
             foreach (var loaded in AppDomain.CurrentDomain.GetAssemblies())
-            {
                 if (string.Equals(loaded.GetName().Name, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    r.Log.Add("resolved " + fileName + " from already-loaded AppDomain");
                     return loaded;
-                }
+            return null;
+        }
+
+        static Type ResolveClaStringType(Assembly fileIo, ReadResult r)
+        {
+            var t = fileIo.GetType("Clarion.ClaString");
+            if (t != null) return t;
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { t = a.GetType("Clarion.ClaString"); if (t != null) return t; }
+                catch { }
             }
             return null;
         }
 
-        // Emit a concrete CFile subclass at runtime. Every abstract method on the
-        // base gets a minimal stub body (return default for its return type). If
-        // CFile's inherited Open / Next / Close don't invoke those stubs during
-        // a read, we win — the TPS driver populates the record buffer straight
-        // from disk and we parse it via DDField offsets. If any inherited method
-        // DOES call a stubbed member we'll hit a safe no-op return rather than
-        // an abstract-method-called exception.
-        static Type EmitDynamicCFileSubclass(Type cfileBase, ReadResult r)
+        // ---- Dynamic CFile subclass emission --------------------------------
+
+        static Type EmitDynamicCFileSubclass(Type cfileBase, Type claStringType, ReadResult r)
         {
             try
             {
@@ -459,7 +441,7 @@ namespace ClarionDctAddin
                     TypeAttributes.Public | TypeAttributes.Class,
                     cfileBase);
 
-                // Collect all abstract methods across the inheritance chain.
+                // Stub every abstract member (collapse inheritance chain).
                 var handled = new HashSet<string>(StringComparer.Ordinal);
                 var t = cfileBase;
                 while (t != null && t != typeof(object))
@@ -468,21 +450,43 @@ namespace ClarionDctAddin
                     {
                         if (!m.IsAbstract) continue;
                         var sig = MethodSignature(m);
-                        if (handled.Contains(sig)) continue;
-                        handled.Add(sig);
+                        if (!handled.Add(sig)) continue;
                         try { EmitStub(typeBuilder, m); }
                         catch (Exception ex) { r.Log.Add("emit stub " + m.Name + " failed: " + ex.Message); }
                     }
                     t = t.BaseType;
                 }
 
-                var concrete = typeBuilder.CreateType();
-                r.Log.Add("emitted " + handled.Count + " stubs onto " + concrete.FullName);
-                return concrete;
+                // Forwarding 4-arg ctor — the shape generated code uses.
+                var baseCtor4 = cfileBase.GetConstructor(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new[] { typeof(byte[]), claStringType, claStringType, claStringType },
+                    null);
+                if (baseCtor4 == null)
+                {
+                    r.Log.Add("no 4-arg CFile base ctor found — inline reader cannot proceed");
+                    return null;
+                }
+                var ctorBuilder = typeBuilder.DefineConstructor(
+                    MethodAttributes.Public | MethodAttributes.HideBySig
+                        | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+                    CallingConventions.Standard,
+                    new[] { typeof(byte[]), claStringType, claStringType, claStringType });
+                var cil = ctorBuilder.GetILGenerator();
+                cil.Emit(OpCodes.Ldarg_0);
+                cil.Emit(OpCodes.Ldarg_1);
+                cil.Emit(OpCodes.Ldarg_2);
+                cil.Emit(OpCodes.Ldarg_3);
+                cil.Emit(OpCodes.Ldarg_S, (byte)4);
+                cil.Emit(OpCodes.Call, baseCtor4);
+                cil.Emit(OpCodes.Ret);
+
+                return typeBuilder.CreateType();
             }
             catch (Exception ex)
             {
-                r.Log.Add("EmitDynamicCFileSubclass failed: " + (ex.InnerException ?? ex).GetType().Name + " - " + (ex.InnerException ?? ex).Message);
+                r.Log.Add("EmitDynamicCFileSubclass failed: " + (ex.InnerException ?? ex).Message);
                 return null;
             }
         }
@@ -498,13 +502,10 @@ namespace ClarionDctAddin
             var parms = abs.GetParameters();
             var parmTypes = parms.Select(p => p.ParameterType).ToArray();
             var attrs = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig;
-            // If the abstract comes from an interface-style member, mark NewSlot; otherwise override.
             if (abs.IsFinal || abs.Attributes.HasFlag(MethodAttributes.NewSlot)) attrs |= MethodAttributes.NewSlot;
             else                                                                 attrs |= MethodAttributes.ReuseSlot;
 
             var mb = tb.DefineMethod(abs.Name, attrs, abs.CallingConvention, abs.ReturnType, parmTypes);
-
-            // Copy parameter names & ref/out modifiers (keeps the JIT happy and debuggers readable).
             for (int i = 0; i < parms.Length; i++)
                 mb.DefineParameter(i + 1, parms[i].Attributes, parms[i].Name);
 
@@ -530,433 +531,197 @@ namespace ClarionDctAddin
             tb.DefineMethodOverride(mb, abs);
         }
 
-        // Dump every declared field + method on CFile and its ancestors so
-        // after a failed run the log tells us exactly which member to use.
-        // Field dump excludes compiler-generated backing fields; method dump
-        // skips Object's inherited methods.
-        static void LogInstanceMembers(Type t, ReadResult r)
+        // ---- Clarion schema XML synthesis -----------------------------------
+
+        // Matches the dialect CFile.ToXML / FieldToXML / MemoToXML / KeyToXML
+        // emit (and therefore the inverse parser in NewClaFile(XmlDocument)
+        // accepts). Keys are omitted — they don't affect record layout and
+        // we read sequentially.
+        static XmlDocument BuildClarionSchemaXml(object table, string path, string driver, ReadResult r)
         {
-            if (t == null) return;
-            var cur = t;
-            while (cur != null && cur != typeof(object))
+            var doc = new XmlDocument();
+            var file = doc.CreateElement("File");
+            var tableName = DictModel.AsString(DictModel.GetProp(table, "Name")) ?? "";
+            file.SetAttribute("label",        ToValidClarionLabel(tableName, "File"));
+            file.SetAttribute("version",      "1");
+            file.SetAttribute("compatible",   "1");
+            file.SetAttribute("driver",       driver ?? "");
+            file.SetAttribute("driverString", driver ?? "");
+            if (!string.IsNullOrEmpty(path)) file.SetAttribute("name", path);
+            doc.AppendChild(file);
+
+            var fields = new List<object>();
+            var fieldsEnum = DictModel.GetProp(table, "Fields") as IEnumerable;
+            if (fieldsEnum != null) foreach (var f in fieldsEnum) if (f != null) fields.Add(f);
+
+            // Memos first (Clarion writes them before Fields).
+            foreach (var f in fields)
             {
-                foreach (var f in cur.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                                  .OrderBy(x => x.Name))
+                var dt = (DictModel.AsString(DictModel.GetProp(f, "DataType")) ?? "").ToUpperInvariant();
+                if (dt != "MEMO" && dt != "BLOB") continue;
+                var label = DictModel.AsString(DictModel.GetProp(f, "Label")) ?? "";
+                var memo = doc.CreateElement("Memo");
+                memo.SetAttribute("label",      ToValidClarionLabel(label, "Memo"));
+                memo.SetAttribute("version",    "1");
+                memo.SetAttribute("compatible", "1");
+                if (dt == "BLOB")
                 {
-                    if (f.Name.IndexOf("k__BackingField", StringComparison.Ordinal) >= 0) continue;
-                    var vis = f.IsPublic ? "public " : (f.IsFamily ? "protected " : (f.IsAssembly ? "internal " : "private "));
-                    r.Log.Add("field  [" + cur.Name + "]: " + vis + f.FieldType.Name + " " + f.Name);
+                    memo.SetAttribute("blob", "true");
                 }
-                foreach (var m in cur.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                                    .OrderBy(x => x.Name))
+                else
                 {
-                    if (m.IsSpecialName) continue; // skip property getters/setters
-                    var vis = m.IsPublic ? "public " : (m.IsFamily ? "protected " : (m.IsAssembly ? "internal " : "private "));
-                    var ps = m.GetParameters();
-                    var sb = new StringBuilder();
-                    for (int i = 0; i < ps.Length; i++) { if (i > 0) sb.Append(", "); sb.Append(ps[i].ParameterType.Name); }
-                    r.Log.Add("method [" + cur.Name + "]: " + vis + m.ReturnType.Name + " " + m.Name + "(" + sb + ")");
+                    int sz; int.TryParse(DictModel.AsString(DictModel.GetProp(f, "FieldSize")) ?? "0", out sz);
+                    memo.SetAttribute("size", (sz > 0 ? sz : 1024).ToString());
                 }
-                cur = cur.BaseType;
+                file.AppendChild(memo);
             }
-        }
 
-        // Find the right member on CFile for name + driver. Clarion-generated
-        // subclasses populate these in their ctors — here we probe every
-        // plausible field and method name, passing either raw strings or
-        // ClaString wraps depending on the member's expected type.
-        static bool ConfigureCFile(object cfile, Type cfileBase, Type claStringType, string driver, string path, byte[] record, ReadResult r)
-        {
-            bool nameOk   = SetNameOrPath(cfile, cfileBase, claStringType, path,   r);
-            bool driverOk = SetDriver    (cfile, cfileBase, claStringType, driver, r);
-            // Some CFile implementations hold the record buffer themselves;
-            // others take it as a ctor arg. Try every candidate shape.
-            TryAssignRecordBuffer(cfile, cfileBase, record, r);
-            return nameOk && driverOk;
-        }
-
-        static bool SetNameOrPath(object cfile, Type cfileBase, Type claStringType, string path, ReadResult r)
-        {
-            // Field names seen in Clarion-generated code and past diagnostic runs.
-            string[] fieldCands = { "Name", "name", "_Name", "_name",
-                                    "FileName", "fileName", "_FileName", "_fileName",
-                                    "FullPathName", "fullPathName",
-                                    "fileFullPath",
-                                    "__CLA_FileName", "__CLA_Name",
-                                    "clsName", "sName", "m_Name", "m_FileName" };
-            foreach (var n in fieldCands)
-                if (SetFieldAnyShape(cfile, cfileBase, n, claStringType, path, r))
-                    { r.Log.Add("name set via field '" + n + "'"); return true; }
-
-            // Method names: SetName, UseFile, Assign, Create, etc.
-            string[] methodCands = { "SetName", "setName", "SetFileName", "UseFile",
-                                     "Assign", "AssignName", "SetPath", "Create",
-                                     "Init", "Open" };
-            foreach (var mName in methodCands)
-                if (InvokeWithStringOrClaString(cfile, cfileBase, mName, claStringType, path, r))
-                    { r.Log.Add("name set via method '" + mName + "'"); return true; }
-
-            return false;
-        }
-
-        static bool SetDriver(object cfile, Type cfileBase, Type claStringType, string driver, ReadResult r)
-        {
-            string[] fieldCands = { "Driver", "driver", "_Driver", "_driver",
-                                    "DriverName", "driverName",
-                                    "__CLA_Driver", "m_Driver" };
-            foreach (var n in fieldCands)
-                if (SetFieldAnyShape(cfile, cfileBase, n, claStringType, driver, r))
-                    { r.Log.Add("driver set via field '" + n + "'"); return true; }
-
-            string[] methodCands = { "SetDriver", "setDriver", "UseDriver" };
-            foreach (var mName in methodCands)
-                if (InvokeWithStringOrClaString(cfile, cfileBase, mName, claStringType, driver, r))
-                    { r.Log.Add("driver set via method '" + mName + "'"); return true; }
-
-            return false;
-        }
-
-        static void TryAssignRecordBuffer(object cfile, Type cfileBase, byte[] record, ReadResult r)
-        {
-            string[] names = { "Record", "record", "_Record", "Buffer", "buffer",
-                               "RecordBuffer", "__CLA_RecordBuffer",
-                               "Memory", "memory", "m_Record" };
-            foreach (var n in names)
-                if (TrySetFieldRaw(cfile, cfileBase, n, record))
-                    { r.Log.Add("record buffer set via field '" + n + "'"); return; }
-        }
-
-        // Sets a field of the given name, trying both plain string and ClaString-wrapped
-        // values depending on the field's declared type. Walks the class chain with
-        // DeclaredOnly so inherited non-public fields are found.
-        static bool SetFieldAnyShape(object target, Type baseType, string name, Type claStringType, string value, ReadResult r)
-        {
-            var cur = target.GetType();
-            while (cur != null && cur != typeof(object))
+            // Then scalar / string fields.
+            foreach (var f in fields)
             {
-                var f = cur.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                if (f != null)
+                var dt = (DictModel.AsString(DictModel.GetProp(f, "DataType")) ?? "").ToUpperInvariant();
+                if (dt == "MEMO" || dt == "BLOB") continue;
+                var label = DictModel.AsString(DictModel.GetProp(f, "Label")) ?? "";
+
+                var field = doc.CreateElement("Field");
+                field.SetAttribute("label",      ToValidClarionLabel(label, "Field"));
+                field.SetAttribute("version",    "1");
+                field.SetAttribute("compatible", "1");
+                field.SetAttribute("type",       dt);
+
+                int sizeN; int.TryParse(DictModel.AsString(DictModel.GetProp(f, "FieldSize")) ?? "0", out sizeN);
+                if (dt == "STRING" || dt == "CSTRING" || dt == "PSTRING"
+                    || dt == "DECIMAL" || dt == "PDECIMAL")
                 {
-                    try
+                    if (sizeN > 0) field.SetAttribute("size", sizeN.ToString());
+                    if (dt == "DECIMAL" || dt == "PDECIMAL")
                     {
-                        object toSet = value;
-                        if (f.FieldType == typeof(string))
-                        {
-                            // fine as-is
-                        }
-                        else if (f.FieldType == typeof(byte[]))
-                        {
-                            toSet = Encoding.GetEncoding(1252).GetBytes(value ?? "");
-                        }
-                        else if (claStringType != null && claStringType.IsAssignableFrom(f.FieldType))
-                        {
-                            toSet = WrapClaString(claStringType, value, r);
-                            if (toSet == null) return false;
-                        }
-                        else
-                        {
-                            // unknown field type — skip
-                            return false;
-                        }
-                        f.SetValue(target, toSet);
-                        return true;
-                    }
-                    catch (Exception ex)
-                    {
-                        r.Log.Add("set field " + name + " on " + cur.Name + " threw: " + (ex.InnerException ?? ex).Message);
-                        return false;
+                        var places = DictModel.AsString(DictModel.GetProp(f, "Places"));
+                        if (!string.IsNullOrEmpty(places) && places != "0")
+                            field.SetAttribute("places", places);
                     }
                 }
-                cur = cur.BaseType;
+                var picture = DictModel.AsString(DictModel.GetProp(f, "Picture"));
+                if (!string.IsNullOrEmpty(picture)) field.SetAttribute("picture", picture);
+
+                file.AppendChild(field);
             }
-            return false;
+
+            r.Log.Add("built schema XML (" + doc.OuterXml.Length + " chars)");
+            return doc;
         }
 
-        static bool TrySetFieldRaw(object target, Type baseType, string name, object value)
+        // Clarion labels must be letters / digits / underscores, starting
+        // with a letter. Non-alphanumerics → '_', leading digit → fallback prefix.
+        static string ToValidClarionLabel(string s, string fallback)
         {
-            var cur = target.GetType();
-            while (cur != null && cur != typeof(object))
-            {
-                var f = cur.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-                if (f != null && f.FieldType.IsAssignableFrom(value.GetType()))
-                {
-                    try { f.SetValue(target, value); return true; } catch { return false; }
-                }
-                cur = cur.BaseType;
-            }
-            return false;
+            if (string.IsNullOrEmpty(s)) s = fallback;
+            var sb = new StringBuilder(s.Length);
+            foreach (var c in s)
+                sb.Append(char.IsLetterOrDigit(c) || c == '_' ? c : '_');
+            if (sb.Length == 0 || !char.IsLetter(sb[0])) sb.Insert(0, fallback + "_");
+            return sb.ToString();
         }
 
-        static bool InvokeWithStringOrClaString(object target, Type baseType, string methodName, Type claStringType, string value, ReadResult r)
+        static bool InvokeSetupFile(object cfile, Type cfileBase, XmlDocument xml, ReadResult r)
         {
-            var cur = target.GetType();
-            while (cur != null && cur != typeof(object))
+            var m = cfileBase.GetMethod("SetupFile", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { typeof(XmlDocument), typeof(int) }, null);
+            if (m == null) { r.Log.Add("SetupFile(XmlDocument, Int32) not found"); return false; }
+            try { m.Invoke(cfile, new object[] { xml, 0 }); return true; }
+            catch (Exception ex)
             {
-                foreach (var m in cur.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    if (m.Name != methodName) continue;
-                    var ps = m.GetParameters();
-                    if (ps.Length != 1) continue;
-                    object arg;
-                    if (ps[0].ParameterType == typeof(string)) arg = value;
-                    else if (claStringType != null && claStringType.IsAssignableFrom(ps[0].ParameterType))
-                        arg = WrapClaString(claStringType, value, r);
-                    else continue;
-                    if (arg == null) continue;
-                    try { m.Invoke(target, new[] { arg }); return true; }
-                    catch (Exception ex) { r.Log.Add("invoke " + methodName + " threw: " + (ex.InnerException ?? ex).Message); return false; }
-                }
-                cur = cur.BaseType;
+                var inner = ex.InnerException ?? ex;
+                r.Log.Add("SetupFile threw: " + inner.GetType().Name + " - " + inner.Message);
+                return false;
             }
-            return false;
         }
 
-        static void LogAbstractMembers(Type t, ReadResult r)
+        // ---- Native pointer helpers -----------------------------------------
+
+        // Clarion's 4-arg CFile ctor allocates a native sbyte* buffer for
+        // m_sDrvName but leaves it as an empty string. CDriver.GetDriver's IL
+        // does `new String(cfile.DrvName).ToUpper()` → null pointer gives
+        // ""→Hashtable miss→null unbox→NRE, and even a non-null-but-empty
+        // pointer misses the hashtable. We overwrite the existing buffer
+        // (never swap the pointer — that desyncs sibling native state).
+        static unsafe void PopulateDrvNamePointer(object cfile, Type cfileBase, string driver, ReadResult r)
         {
-            if (t == null) return;
-            int n = 0;
-            var cur = t;
-            while (cur != null && cur != typeof(object))
-            {
-                foreach (var m in cur.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    if (!m.IsAbstract) continue;
-                    n++;
-                    var ps = m.GetParameters();
-                    var sb = new StringBuilder();
-                    for (int i = 0; i < ps.Length; i++) { if (i > 0) sb.Append(", "); sb.Append(ps[i].ParameterType.Name); }
-                    r.Log.Add("abstract [" + cur.Name + "]: " + m.ReturnType.Name + " " + m.Name + "(" + sb + ")");
-                }
-                cur = cur.BaseType;
-            }
-            r.Log.Add("total abstract members on " + t.Name + ": " + n);
+            var f = cfileBase.GetField("m_sDrvName", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (f == null) { r.Log.Add("m_sDrvName field not found"); return; }
+            var v = f.GetValue(cfile);
+            if (!(v is Pointer)) { r.Log.Add("m_sDrvName not a Pointer"); return; }
+            IntPtr p = (IntPtr)Pointer.Unbox(v);
+            if (p == IntPtr.Zero) { r.Log.Add("m_sDrvName pointer is null"); return; }
+
+            byte[] bytes = Encoding.ASCII.GetBytes((driver ?? "") + "\0");
+            try { Marshal.Copy(bytes, 0, p, bytes.Length); }
+            catch (Exception ex) { r.Log.Add("Marshal.Copy m_sDrvName failed: " + ex.Message); }
         }
 
-        // Walk every loaded assembly looking for concrete descendants of CFile.
-        // Scores each candidate by how well its type name matches the driver
-        // keyword (TOPSPEED -> CTopSpeed / CTopspeedFile / CTPS / CTopSpeedFile).
-        // Returns the best match, or null if nothing inherits from CFile.
-        static Type PickConcreteCFileType(Type baseType, string driver, ReadResult r)
+        // m_pClaFile -> ClaFile struct has rec_buf (SByte*) and rec_len (Int32)
+        // fields with sequential managed layout matching native, so
+        // Marshal.OffsetOf gives us the right addresses.
+        static unsafe bool ResolveNativeRecordBuffer(object cfile, Type cfileBase, out IntPtr recBufPtr, out int recLen, ReadResult r)
         {
-            var drv = (driver ?? "").ToUpperInvariant();
-            var hints = new List<string>();
-            if (drv == "TOPSPEED" || drv == "TPS" || drv == "TOPSCAN" || drv == "TPSCAN")
-            { hints.Add("TOPSPEED"); hints.Add("TOPSCAN"); hints.Add("TPS"); }
-            else
-            { hints.Add(drv); }
+            recBufPtr = IntPtr.Zero; recLen = 0;
+            var mPClaFile = cfileBase.GetField("m_pClaFile", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (mPClaFile == null) { r.Log.Add("m_pClaFile not found"); return false; }
+            var val = mPClaFile.GetValue(cfile);
+            if (!(val is Pointer)) { r.Log.Add("m_pClaFile not a Pointer"); return false; }
+            IntPtr claFilePtr = (IntPtr)Pointer.Unbox(val);
+            if (claFilePtr == IntPtr.Zero) { r.Log.Add("m_pClaFile is null"); return false; }
 
-            var candidates = new List<Type>();
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            var claFileType = mPClaFile.FieldType.GetElementType();
+            if (claFileType == null) { r.Log.Add("ClaFile element type unresolvable"); return false; }
+
+            int recBufOff, recLenOff;
+            try
             {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types; }
-                catch { continue; }
-                if (types == null) continue;
-                foreach (var t in types)
-                {
-                    if (t == null) continue;
-                    try
-                    {
-                        if (t.IsAbstract || t.IsInterface) continue;
-                        if (!baseType.IsAssignableFrom(t)) continue;
-                        candidates.Add(t);
-                    }
-                    catch { }
-                }
+                recBufOff = Marshal.OffsetOf(claFileType, "rec_buf").ToInt32();
+                recLenOff = Marshal.OffsetOf(claFileType, "rec_len").ToInt32();
+            }
+            catch (Exception ex)
+            {
+                r.Log.Add("Marshal.OffsetOf ClaFile fields failed: " + ex.Message);
+                return false;
             }
 
-            foreach (var c in candidates) r.Log.Add("CFile candidate: " + c.FullName);
-            if (candidates.Count == 0) return null;
-
-            Type best = null;
-            int bestScore = int.MinValue;
-            foreach (var c in candidates)
-            {
-                var upper = c.Name.ToUpperInvariant();
-                int score = 0;
-                foreach (var h in hints) if (upper.IndexOf(h, StringComparison.Ordinal) >= 0) score += 10;
-                // Penalise generic helpers / abstract-looking names
-                if (upper.Contains("ABSTRACT") || upper.Contains("BASE")) score -= 5;
-                // Prefer shorter / simpler names when scores tie
-                score -= Math.Max(0, c.Name.Length - 20);
-                if (score > bestScore) { bestScore = score; best = c; }
-            }
-            r.Log.Add("best candidate score=" + bestScore + " -> " + (best == null ? "<null>" : best.FullName));
-            return best;
+            recLen    = Marshal.ReadInt32(claFilePtr, recLenOff);
+            recBufPtr = Marshal.ReadIntPtr(claFilePtr, recBufOff);
+            return true;
         }
 
-        static Type ResolveClaStringType(Assembly fileIo, ReadResult r)
-        {
-            // First try in FileIO.dll, then in any other already-loaded SoftVelocity assembly.
-            var t = fileIo.GetType("Clarion.ClaString");
-            if (t != null) { r.Log.Add("ClaString: " + t.AssemblyQualifiedName); return t; }
-            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try
-                {
-                    t = a.GetType("Clarion.ClaString");
-                    if (t != null) { r.Log.Add("ClaString (via " + a.GetName().Name + "): " + t.AssemblyQualifiedName); return t; }
-                }
-                catch { }
-            }
-            r.Log.Add("Clarion.ClaString type not found in any loaded assembly.");
-            return null;
-        }
-
-        static void LogStaticMethods(Type t, string label, ReadResult r)
-        {
-            if (t == null) { r.Log.Add(label + ": <null>"); return; }
-            var sm = t.GetMethods(BindingFlags.Public | BindingFlags.Static);
-            r.Log.Add(label + " static method count: " + sm.Length);
-            foreach (var m in sm)
-            {
-                if (m.DeclaringType != t) continue; // skip inherited from Object
-                var ps = m.GetParameters();
-                var sb = new StringBuilder();
-                for (int i = 0; i < ps.Length; i++) { if (i > 0) sb.Append(", "); sb.Append(ps[i].ParameterType.Name); }
-                r.Log.Add(label + " static: " + m.ReturnType.Name + " " + m.Name + "(" + sb + ")");
-            }
-        }
-
-        static void FindByKeyword(string needle, ReadResult r)
-        {
-            var upper = needle.ToUpperInvariant();
-            int found = 0;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types; }
-                catch { continue; }
-                if (types == null) continue;
-                foreach (var t in types)
-                {
-                    if (t == null || t.Name == null) continue;
-                    if (t.Name.ToUpperInvariant().IndexOf(upper, StringComparison.Ordinal) < 0) continue;
-                    r.Log.Add("keyword '" + needle + "' -> " + t.FullName
-                        + "  (" + (t.IsAbstract ? "abstract, " : "") + (t.IsInterface ? "interface, " : "") + "assembly=" + asm.GetName().Name + ")");
-                    found++;
-                    if (found > 40) { r.Log.Add("keyword '" + needle + "': truncated at 40 hits"); return; }
-                }
-            }
-            if (found == 0) r.Log.Add("keyword '" + needle + "': no hits");
-        }
-
-        static void LogCtors(Type t, string label, ReadResult r)
-        {
-            if (t == null) { r.Log.Add(label + ": <null>"); return; }
-            foreach (var c in t.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            {
-                var ps = c.GetParameters();
-                var sig = new StringBuilder();
-                for (int i = 0; i < ps.Length; i++)
-                {
-                    if (i > 0) sig.Append(", ");
-                    sig.Append(ps[i].ParameterType.Name);
-                }
-                r.Log.Add(label + " ctor(" + sig + ")");
-            }
-        }
+        // ---- ClaString wrapping ---------------------------------------------
 
         static object WrapClaString(Type claStringType, string value, ReadResult r)
         {
             if (claStringType == null) return value;
             value = value ?? "";
 
-            // 1. (string) ctor
             var cs = claStringType.GetConstructor(new[] { typeof(string) });
             if (cs != null)
             {
-                try { var w = cs.Invoke(new object[] { value }); r.Log.Add("ClaString(\"" + Preview(value) + "\") ok via (string) ctor"); return w; }
-                catch (Exception ex) { r.Log.Add("ClaString(string) failed: " + (ex.InnerException ?? ex).Message); }
+                try { return cs.Invoke(new object[] { value }); }
+                catch { }
             }
-
-            // 2. Static implicit operator op_Implicit(string)
             var op = claStringType.GetMethod("op_Implicit", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
             if (op != null)
             {
-                try { var w = op.Invoke(null, new object[] { value }); r.Log.Add("ClaString via op_Implicit(string) ok"); return w; }
-                catch (Exception ex) { r.Log.Add("op_Implicit(string) failed: " + (ex.InnerException ?? ex).Message); }
+                try { return op.Invoke(null, new object[] { value }); }
+                catch { }
             }
-
-            // 3. (byte[]) ctor — Clarion commonly represents strings as char arrays
             var cb = claStringType.GetConstructor(new[] { typeof(byte[]) });
             if (cb != null)
             {
-                try { var w = cb.Invoke(new object[] { Encoding.GetEncoding(1252).GetBytes(value) }); r.Log.Add("ClaString via (byte[]) ctor ok"); return w; }
-                catch (Exception ex) { r.Log.Add("ClaString(byte[]) failed: " + (ex.InnerException ?? ex).Message); }
+                try { return cb.Invoke(new object[] { Encoding.GetEncoding(1252).GetBytes(value) }); }
+                catch { }
             }
-
-            // 4. (int size, string initial) or (int size) etc. — try anything with a (int) first.
-            var ci = claStringType.GetConstructor(new[] { typeof(int) });
-            if (ci != null)
-            {
-                try
-                {
-                    var w = ci.Invoke(new object[] { Math.Max(1, value.Length) });
-                    TrySet(w, "Value", value, r);
-                    TrySet(w, "Text",  value, r);
-                    r.Log.Add("ClaString via (int) ctor + Value/Text set ok");
-                    return w;
-                }
-                catch (Exception ex) { r.Log.Add("ClaString(int) failed: " + (ex.InnerException ?? ex).Message); }
-            }
-
-            // 5. Default ctor + property set
-            var cd = claStringType.GetConstructor(Type.EmptyTypes);
-            if (cd != null)
-            {
-                try
-                {
-                    var w = cd.Invoke(null);
-                    if (TrySet(w, "Value", value, r) || TrySet(w, "Text", value, r))
-                    {
-                        r.Log.Add("ClaString via default ctor + Value/Text set ok");
-                        return w;
-                    }
-                    r.Log.Add("ClaString default ctor ok but no Value/Text setter found");
-                }
-                catch (Exception ex) { r.Log.Add("ClaString default ctor failed: " + (ex.InnerException ?? ex).Message); }
-            }
-
-            r.Log.Add("WrapClaString: all strategies exhausted for \"" + Preview(value) + "\"");
+            r.Log.Add("WrapClaString: all strategies exhausted for \"" + value + "\"");
             return null;
         }
 
-        static string Preview(string v)
-        {
-            if (v == null) return "<null>";
-            if (v.Length > 48) return v.Substring(0, 45) + "...";
-            return v;
-        }
-
-        static bool TrySet(object target, string name, object value, ReadResult r)
-        {
-            if (target == null) return false;
-            try
-            {
-                var p = target.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (p != null && p.CanWrite)
-                {
-                    p.SetValue(target, value, null);
-                    if (r != null) r.Log.Add("set " + target.GetType().Name + "." + name + " ok");
-                    return true;
-                }
-                var f = target.GetType().GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (f != null)
-                {
-                    f.SetValue(target, value);
-                    if (r != null) r.Log.Add("set-field " + target.GetType().Name + "." + name + " ok");
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                if (r != null) r.Log.Add("set " + name + " failed: " + (ex.InnerException ?? ex).Message);
-            }
-            return false;
-        }
+        // ---- Misc method dispatch ------------------------------------------
 
         static MethodInfo FindMethod(Type t, string name, Type[] args)
         {
@@ -964,16 +729,48 @@ namespace ClarionDctAddin
             return t.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, null, args, null);
         }
 
-        static void Invoke(MethodInfo m, object target, string tag)
+        static void Invoke(MethodInfo m, object target)
         {
             if (m == null) return;
             var ps = m.GetParameters();
             var args = new object[ps.Length];
-            // Default every parameter — most Clarion Open overloads accept 0 or 1
-            // modest argument (open mode / access flag); 0 will give read access.
             for (int i = 0; i < args.Length; i++)
                 args[i] = ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null;
             m.Invoke(target, args);
+        }
+
+        static void InvokeOpen(MethodInfo m, object target, ReadResult r)
+        {
+            if (m == null) return;
+            var ps = m.GetParameters();
+            if (ps.Length == 0) { m.Invoke(target, null); return; }
+            var args = new object[ps.Length];
+            for (int i = 0; i < args.Length; i++)
+            {
+                var pt = ps[i].ParameterType;
+                if (pt == typeof(int)   || pt == typeof(uint))  args[i] = CLARION_OPEN_MODE;
+                else if (pt == typeof(short) || pt == typeof(ushort)) args[i] = (short)CLARION_OPEN_MODE;
+                else if (pt == typeof(byte)) args[i] = (byte)CLARION_OPEN_MODE;
+                else args[i] = pt.IsValueType ? Activator.CreateInstance(pt) : null;
+            }
+            m.Invoke(target, args);
+            r.Log.Add("Open(" + CLARION_OPEN_MODE.ToString("X") + "h)");
+        }
+
+        // Call a no-arg instance method that returns an int; return 0 on
+        // any reflection / runtime failure. Used for Bytes() / Records() /
+        // Status() probes after Open.
+        static int SafeIntCall(Type t, object target, string name)
+        {
+            try
+            {
+                var m = t.GetMethod(name, BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (m == null) return 0;
+                var ret = m.Invoke(target, null);
+                if (ret == null) return 0;
+                try { return Convert.ToInt32(ret); } catch { return 0; }
+            }
+            catch { return 0; }
         }
     }
 }

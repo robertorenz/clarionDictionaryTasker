@@ -72,12 +72,15 @@ namespace ClarionDctAddin
             btnConn.Click += delegate { ChangeConnection(); };
             var btnTopScan = new Button { Text = "Open in TopScan", Left = 524, Top = 4, Width = 150, Height = 30, FlatStyle = FlatStyle.System };
             btnTopScan.Click += delegate { OpenInTopScan(); };
+            var btnEmbed = new Button { Text = "Embed TopScan", Left = 684, Top = 4, Width = 150, Height = 30, FlatStyle = FlatStyle.System };
+            btnEmbed.Click += delegate { EmbedTopScan(); };
             toolbar.Controls.Add(lblRows);
             toolbar.Controls.Add(numRows);
             toolbar.Controls.Add(btnLoad);
             toolbar.Controls.Add(btnShowLog);
             toolbar.Controls.Add(btnConn);
             toolbar.Controls.Add(btnTopScan);
+            toolbar.Controls.Add(btnEmbed);
 
             lblStatus = new Label
             {
@@ -258,6 +261,20 @@ namespace ClarionDctAddin
             lblStatus.Text = "Launched TopScan on " + tpsPath;
         }
 
+        void EmbedTopScan()
+        {
+            var tpsPath = ResolveTpsPath();
+            if (string.IsNullOrEmpty(tpsPath))
+            {
+                MessageBox.Show(this, "Could not resolve a .TPS path for this table.",
+                    "TopScan", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            using (var dlg = new TopScanEmbedDialog(tpsPath))
+                dlg.ShowDialog(this);
+            lblStatus.Text = "Embedded TopScan closed.";
+        }
+
         string ResolveTpsPath()
         {
             var full = DictModel.AsString(DictModel.GetProp(table, "FullPathName")) ?? "";
@@ -294,7 +311,16 @@ namespace ClarionDctAddin
 
         void LoadViaClarionFile(int n)
         {
-            var r = ClarionFileAccessor.OpenForRead(dict, table, n);
+            // TPS drivers: read the TPS bytes directly via our bundled
+            // tps-parse-net — no native ClaTPS.dll / CLegacy involvement.
+            // Other drivers fall back to the Clarion-runtime reader (which
+            // is currently TPS-gated with a graceful error).
+            var driver = (DictModel.AsString(DictModel.GetProp(table, "FileDriverName")) ?? "").ToUpperInvariant();
+            ClarionFileAccessor.ReadResult r;
+            if (driver == "TOPSPEED" || driver == "TPS" || driver == "TOPSCAN" || driver == "TPSCAN")
+                r = TpsDirectReader.Read(dict, table, n);
+            else
+                r = ClarionFileAccessor.OpenForRead(dict, table, n);
             lastResult = r;
             grid.Columns.Clear();
             grid.Rows.Clear();

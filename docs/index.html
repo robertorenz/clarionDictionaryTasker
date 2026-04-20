@@ -189,6 +189,7 @@
       <li><a href="#copy-fields">Batch copy fields</a></li>
       <li><a href="#copy-keys">Batch copy keys</a></li>
       <li><a href="#json">JSON export</a></li>
+      <li><a href="#view-data">View data (TPS &amp; SQL)</a></li>
     </ul>
 
     <h3>Dictionary tools</h3>
@@ -224,6 +225,11 @@
       <li><a href="#ref-why">Why we use it here</a></li>
       <li><a href="#ref-patterns">The patterns we use</a></li>
       <li><a href="#ref-tradeoffs">Trade-offs</a></li>
+    </ul>
+
+    <h3>Acknowledgements</h3>
+    <ul>
+      <li><a href="#credits">Credits &amp; third-party</a></li>
     </ul>
   </nav>
 
@@ -609,6 +615,125 @@
     <code>JsonParser.cs</code> is the recursive-descent parser used by Tree and the four
     structured views; <code>JsonViewTransforms.cs</code> hosts the Table / YAML / Path list /
     Schema renderers. The whole stack is dependency-free — no Newtonsoft, no <code>System.Web</code>.
+  </p>
+</article>
+
+<article id="view-data">
+  <span class="kicker">User manual · part 9</span>
+  <h2>View data (TPS &amp; SQL)</h2>
+  <p>
+    Right-click any table in the Tables list and pick <strong>View data...</strong> to see the
+    first N rows of the table's actual contents in a read-only grid. Useful for sanity-checking
+    schema changes, spot-checking a migration, or just peeking at live data without leaving the
+    IDE.
+  </p>
+
+  <h3>Three paths, one dialog</h3>
+  <p>
+    The dialog adapts to whatever driver the table uses. Clarion dictionaries mix physical-file
+    drivers (<code>TOPSPEED</code>, <code>DBASE</code>, …) with network drivers
+    (<code>MSSQL</code>, <code>ODBC</code>, …); each needs a different reader.
+  </p>
+  <table>
+    <thead><tr><th>Driver</th><th>How we read it</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>MSSQL</code></td>
+        <td>
+          Direct ADO.NET via <code>System.Data.SqlClient</code>. Connection string resolved
+          from the table's <code>OWNER('…')</code> argument, saved per-dict, re-promptable via
+          <strong>Change connection…</strong>.
+        </td>
+        <td>Full support, including types.</td>
+      </tr>
+      <tr>
+        <td><code>TOPSPEED</code> (<code>.TPS</code>)</td>
+        <td>
+          Direct managed parse of the TPS bytes via the bundled
+          <a href="https://github.com/pharmadata/tps-parse-net">tps-parse-net</a> library
+          (Apache-2; see <a href="#credits">Credits</a>). Does not use Clarion's
+          <code>ClaTPS.dll</code> or the runtime's <code>CFile</code> pipeline — the add-in
+          reads the file format itself, so it works in-process without dragging in native
+          driver state.
+        </td>
+        <td>
+          Strings, dates, times, integers, decimals, BCD, floats, doubles, fixed / pascal /
+          zero-terminated strings, groups, arrays, memos (placeholder render). Edge-case
+          TPS files (encrypted, unusual schema variants) may fail to parse — the parser is
+          community reverse-engineered.
+        </td>
+      </tr>
+      <tr>
+        <td>All other file drivers</td>
+        <td>
+          Falls through to <code>ClarionFileAccessor</code>, which drives the Clarion .NET
+          runtime via reflection. Currently gated to a graceful error for non-TPS; this is
+          the hook for future drivers (ASCII, DOS, DBASE3/4) if we ever need them.
+        </td>
+        <td>Not yet implemented — surfaces a clear error.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Backup viewer — embedded TopScan</h3>
+  <p>
+    Every <em>View data</em> dialog also carries <strong>Open in TopScan</strong> and
+    <strong>Embed TopScan</strong> buttons. TopScan is SoftVelocity's own TPS viewer, shipped
+    with Clarion. <strong>Open in TopScan</strong> launches it as a separate window;
+    <strong>Embed TopScan</strong> uses Win32 <code>SetParent</code> to reparent its top-level
+    window into a panel inside the <em>View data</em> dialog — no second taskbar entry, no
+    alt-tab to switch between the grid and the hex view.
+  </p>
+  <p>
+    TopScan is always available as a fallback: it uses Clarion's own private TPS codec, so any
+    TPS file it can open is guaranteed to render, including exotic encrypted / versioned
+    variants our own parser doesn't know about.
+  </p>
+
+  <h3>Why bundle a TPS parser — why not use Clarion's runtime?</h3>
+  <p>
+    Earlier drafts of <em>View data</em> tried to drive Clarion's own .NET runtime:
+    <code>SoftVelocity.Clarion.FileIO.Clarion.CFile</code> via an emitted subclass +
+    <code>SetupFile(xmlDoc, 0)</code> with a synthesised schema. That pipeline <em>works</em>
+    all the way through file open and record iteration — the native <code>ClarionDrv.dll</code>
+    loads, the TPS driver accepts the <code>Open</code>, <code>Next()</code> returns 0
+    (success) — but <code>Bytes()</code> and <code>Records()</code> both return 0 and the
+    record buffer stays empty.
+  </p>
+  <p>
+    The reason: Clarion's native runtime calls back into managed code via
+    <code>CLegacy.GetValue</code> to ask for record-layout details. Clarion-generated
+    <code>CFile</code> subclasses satisfy that callback contract through their
+    <code>__CLA_Store</code> / <code>__CLA_Retrieve</code> / <code>__CLA_GetRecord</code>
+    overrides, which marshal a <code>CGroupBuffer</code> against a <code>CGroup</code>
+    describing each field. Our runtime-injected subclass stubs those abstracts as no-ops, so
+    the native side silently skips record marshaling. Reimplementing that callback contract
+    would effectively mean reimplementing Clarion's code generator — way outside the scope
+    of a read-only data viewer.
+  </p>
+  <p>
+    <strong>Parsing TPS directly bypasses the problem.</strong> Erik Hooijmeijer's open-source
+    reverse-engineering of the TPS format (and Adam Burger's C# port of it) give us a pure
+    managed reader that reads the bytes off disk and hands us back strongly-typed field
+    values. No native DLLs, no callback contracts, no IDE crash risk.
+  </p>
+
+  <h3>Under the hood</h3>
+  <p>
+    <code>ViewDataDialog.cs</code> hosts the grid and the toolbar. For TPS drivers,
+    <code>TpsDirectReader.cs</code> wraps the bundled parser in <code>TpsParse/</code> and
+    emits a <code>ClarionFileAccessor.ReadResult</code> (shared shape with the SQL path so
+    the grid stays driver-agnostic). DCT field labels map to TPS field names by
+    case-insensitive match on the suffix after the <code>PRE:</code> prefix — Clarion's
+    internal naming convention — with a small loss for audit-only DCT fields that don't
+    exist physically in the TPS.
+  </p>
+  <p>
+    One local patch to the bundled parser: <code>DataRecord.ParseValues</code> now seeks to
+    each field's declared <code>Offset</code> before reading, rather than advancing the
+    stream position sequentially. Without that, <code>OVER()</code>-style aliased fields
+    (common in Clarion — multiple named fields sharing the same bytes as a parent group)
+    come out as mid-string garbage. One-line change, documented in the patched source.
   </p>
 </article>
 
@@ -1782,6 +1907,92 @@ TryInvokeNoArgs(viewContent, <span class="tok-s">"OnIsDirtyChanged"</span>, nonP
     The net effect: we trade compile-time safety for <strong>portability + access to non-public
     members</strong>, which was essential because the entire value proposition of this add-in is
     <em>write back to a live dictionary that was never designed for third-party mutation</em>.
+  </p>
+</article>
+
+<article id="credits">
+  <span class="kicker">Acknowledgements</span>
+  <h2>Credits &amp; third-party</h2>
+  <p>
+    Dictionary Tasker is built on the shoulders of some excellent open-source work. The
+    following third-party code is either bundled directly into the add-in or referenced at
+    runtime via the Clarion 12 IDE host. All licences are compatible with bundled
+    redistribution.
+  </p>
+
+  <h3>Bundled libraries</h3>
+  <table>
+    <thead><tr><th>Library</th><th>Used for</th><th>Licence</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>
+          <strong><a href="https://github.com/pharmadata/tps-parse-net">tps-parse-net</a></strong>
+          by <a href="https://github.com/pharmadata">pharmadata</a> /
+          <a href="https://github.com/AdamBurger">Adam Burger</a>.
+          Ported from Erik Hooijmeijer's Java
+          <a href="https://github.com/ctrl-alt-dev/tps-parse">tps-parse</a>.
+        </td>
+        <td>
+          The <a href="#view-data">View data</a> feature's direct-TPS reader. The parser
+          implements the reverse-engineered TopSpeed file format in pure managed code, so
+          TPS tables can be read without invoking Clarion's native runtime.
+        </td>
+        <td>
+          Apache-2.0. Source bundled under <code>ClarionDctAddin/TpsParse/</code> with one
+          documented local patch (<code>DataRecord.ParseValues</code> now honours field
+          <code>Offset</code> for <code>OVER()</code>-aliased fields).
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Referenced at runtime</h3>
+  <table>
+    <thead><tr><th>Component</th><th>Role</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>ICSharpCode.SharpDevelop 2.1</strong></td>
+        <td>Add-in host framework (the engine Clarion 12's IDE is built on).</td>
+        <td>LGPL. Loaded from <code>C:\clarion12\bin\ICSharpCode.*.dll</code>; not bundled.</td>
+      </tr>
+      <tr>
+        <td><strong>SoftVelocity Clarion 12</strong></td>
+        <td>
+          Hosts the add-in, supplies the live dictionary model via
+          <code>SoftVelocity.DataDictionary</code>, and provides the <strong>TopScan</strong>
+          TPS viewer we embed via Win32 <code>SetParent</code> as a guaranteed fallback.
+        </td>
+        <td>Proprietary. The add-in targets the public surface only — no modification.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Reverse-engineering references</h3>
+  <p>
+    The TPS file format is not publicly documented by SoftVelocity. Our direct-read path rests
+    on work by:
+  </p>
+  <ul>
+    <li>
+      <strong>Erik Hooijmeijer</strong> —
+      <a href="https://dontpanic.42.nl/2013/01/liberating-data-from-clarion-tps-files.html">Liberating data from Clarion TPS files</a>,
+      the foundational 2013 writeup on the TPS format and accompanying Java implementation.
+      Everything we read from TPS ultimately flows from this analysis.
+    </li>
+    <li>
+      <strong>Adam Burger / pharmadata</strong> — the C#/.NET port that made bundling the
+      parser into a Clarion 12 add-in practical (targets .NET 2.0, no external dependencies,
+      ~1600 lines of C#).
+    </li>
+  </ul>
+
+  <h3>Licence notes</h3>
+  <p>
+    <code>LICENSE</code> in the repository root covers Dictionary Tasker itself. The Apache-2
+    licence covering tps-parse-net requires attribution (this page) and preservation of
+    copyright headers (preserved in the bundled source). Our local patch to
+    <code>DataRecord.ParseValues</code> is documented with a comment in the source. No other
+    third-party code is bundled into the shipped DLL.
   </p>
 </article>
 

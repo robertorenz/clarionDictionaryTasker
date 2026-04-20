@@ -53,6 +53,12 @@ A SharpDevelop add-in for the **Clarion 12 IDE** that inspects the currently ope
 ### Enterprise glue
 - **Git commit hook** — detects the repo root, shows `git status` for the `.DCT`, seeds a commit message, commits and optionally pushes. Manual rather than auto-on-save, for reliability across Clarion 12 point releases.
 
+### View data (TPS & SQL)
+- **View data** — right-click any table and peek at the first N rows in a read-only grid, without leaving the IDE.
+  - **SQL** tables (MSSQL) read via direct ADO.NET (`SqlClient`), connection string pulled from the table's `OWNER('…')` and remembered per-dict.
+  - **TPS** tables read via the bundled [tps-parse-net](https://github.com/pharmadata/tps-parse-net) library — a managed port of Erik Hooijmeijer's reverse-engineered TPS reader. No `ClaTPS.dll`, no native Clarion runtime: the add-in parses the TPS bytes directly. One local patch (seek to each field's `Offset` before reading) fixes Clarion's `OVER()`-aliased fields.
+  - **Embed TopScan** / **Open in TopScan** — SoftVelocity's own TPS viewer, either reparented into the dialog via Win32 `SetParent` or launched as a separate process. Always available as a fallback for edge-case TPS files the parser doesn't know how to decode.
+
 ### Generation & export
 - **SQL DDL export** — live preview window, 5 dialects (SQL Server, PostgreSQL, SQLite, MySQL, MariaDB). Whole dictionary or single table. Remembers the preferred dialect.
 - **Model classes** — emit one class/interface per table in **C#** (PascalCase POCOs with XML doc comments) or **TypeScript** (camelCase `export interface`s with JSDoc). Live preview, namespace option, Copy/Save.
@@ -174,6 +180,15 @@ It's a plain key=value text file. Delete a line to reset that preference to its 
 | `BatchCopyFieldsDialog.cs` | Batch field propagation. |
 | `BatchCopyKeysDialog.cs` | Batch key propagation with component remap. |
 | `JsonExporter.cs` | Dependency-free JSON writer. |
+| `ViewDataDialog.cs` | Read-only data grid for SQL/TPS tables, with TopScan embed + external-launch buttons. |
+| `SqlTableAccessor.cs` | Direct ADO.NET reader for MSSQL tables (via `SqlClient`). |
+| `SqlConnectionPromptDialog.cs` | Per-dict connection-string prompt. |
+| `TpsDirectReader.cs` | TPS reader that wraps the bundled `TpsParse/` library (bypasses Clarion's native runtime). |
+| `TpsParse/` | Vendored `tps-parse-net` — reverse-engineered managed TPS parser, Apache-2, ~1600 lines. |
+| `ClarionFileAccessor.cs` | Reflection-driven accessor for non-TPS file drivers (currently gated to a graceful error). |
+| `TopScanEmbedDialog.cs` | Launches TopScan and reparents its HWND into a panel via Win32 `SetParent`. |
+| `TopScanLauncher.cs` | Locates / launches `TopScan.exe` externally. |
+| `Win32Embed.cs` | Thin `SetParent` / style-bit helper for the embed. |
 | `Settings.cs` | `%LOCALAPPDATA%` key=value settings. |
 | `docs/index.html` | Embedded HTML manual (Help button). |
 
@@ -181,6 +196,15 @@ It's a plain key=value text file. Delete a line to reset that preference to its 
 
 - Tested against Clarion 12.0.13941.
 - The add-in targets .NET Framework 4.0 because that's what Clarion 12 loads.
+
+## Credits
+
+Dictionary Tasker bundles and builds on open-source work. The full list with licence notes is in the in-app help (see the **Credits** section of `docs/index.html`). Briefly:
+
+- **[tps-parse-net](https://github.com/pharmadata/tps-parse-net)** — Adam Burger / pharmadata. The managed TPS reader that powers the **View data** feature for TOPSPEED tables. Apache-2. Source vendored under `ClarionDctAddin/TpsParse/` with one documented local patch (`DataRecord.ParseValues` now seeks to each field's `Offset` before reading, to handle Clarion `OVER()`-aliased fields).
+- **[tps-parse](https://github.com/ctrl-alt-dev/tps-parse)** (Java) — Erik Hooijmeijer. The original reverse-engineering of the TopSpeed file format; everything tps-parse-net does traces back to this work. Background writeup: [Liberating data from Clarion TPS files](https://dontpanic.42.nl/2013/01/liberating-data-from-clarion-tps-files.html).
+- **SoftVelocity Clarion 12 / TopScan** — the IDE host and the fallback TPS viewer we embed via Win32 `SetParent`.
+- **ICSharpCode.SharpDevelop 2.1** — the add-in framework Clarion 12's IDE is built on.
 
 ## License
 
