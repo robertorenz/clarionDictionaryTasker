@@ -273,17 +273,38 @@
 <article id="install">
   <span class="kicker">User manual · part 2</span>
   <h2>Installing and deploying</h2>
-  <p>The add-in ships as a single DLL plus an <code>.addin</code> manifest. There is no installer.</p>
+  <p>
+    The add-in ships as a single DLL plus an <code>.addin</code> manifest, bytecode-compatible
+    with both <strong>Clarion 12</strong> and <strong>Clarion 11.1</strong> (both IDEs load
+    .NET 4.0 add-ins from the same folder layout). Two ways to install:
+  </p>
+
+  <h3>Option 1 — installer (for end users)</h3>
+  <p>
+    <code>install\build-installer.bat</code> (requires Inno Setup 6) produces a single
+    <code>DictionaryTasker-Setup-&lt;version&gt;.exe</code> under <code>install\dist\</code>.
+    The wizard offers checkboxes for <strong>Clarion 12</strong> and <strong>Clarion 11.1</strong> —
+    tick one or both. For each ticked version it auto-detects the install root
+    (<code>C:\clarion12</code>, <code>C:\clarion11.1</code>, or the
+    <code>%ProgramFiles%\SoftVelocity\Clarion&nbsp;XX</code> variants), warns to close the IDE,
+    and copies the DLL + manifest to the right <code>Addins\Misc\ClarionDctAddin\</code>
+    subfolder. Registers itself under Windows "Apps &amp; features" for clean uninstall.
+  </p>
+
+  <h3>Option 2 — deploy.bat (for quick local iteration)</h3>
   <ol>
-    <li><strong>Close Clarion 12.</strong> The IDE holds a lock on its add-in folder while running.</li>
+    <li><strong>Close the Clarion IDE you're targeting.</strong> Clarion holds a lock on its
+        add-in folder while running.</li>
     <li>Copy <code>ClarionDctAddin.dll</code> and <code>ClarionDctAddin.addin</code> into
-        <code>C:\clarion12\bin\Addins\Misc\ClarionDctAddin\</code>. The repo ships a
-        <code>deploy.bat</code> that does exactly this from the build output.</li>
-    <li>Launch Clarion 12. A new button with the Dictionary Tasker icon (book + magnifier)
-        appears on the Standard toolbar. Clicking it is the sole entry point — the add-in
-        does not add any main-menu entries. The button is <strong>disabled</strong> (rendered
-        greyed-out) whenever no dictionary is open; it lights up the moment a <code>.DCT</code>
-        tab is active.</li>
+        <code>C:\clarion12\bin\Addins\Misc\ClarionDctAddin\</code> (or the equivalent
+        <code>C:\clarion11.1\bin\Addins\Misc\ClarionDctAddin\</code> for Clarion 11.1). The
+        repo ships a <code>deploy.bat</code> that does the Clarion 12 copy from the build
+        output; duplicate it with the right path for Clarion 11.1.</li>
+    <li>Launch the Clarion IDE. A new button with the Dictionary Tasker icon (book +
+        magnifier) appears on the Standard toolbar. Clicking it is the sole entry point — the
+        add-in does not add any main-menu entries. The button is <strong>disabled</strong>
+        (rendered greyed-out) whenever no dictionary is open; it lights up the moment a
+        <code>.DCT</code> tab is active.</li>
   </ol>
   <div class="callout warn">
     <strong>Safety reminder:</strong> Batch operations mutate the <em>open dictionary</em>.

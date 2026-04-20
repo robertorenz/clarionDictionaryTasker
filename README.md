@@ -1,6 +1,6 @@
 # clarionDictionaryTasker
 
-A SharpDevelop add-in for the **Clarion 12 IDE** that inspects the currently open dictionary and offers a growing catalogue of read-only and batch tools — without ever parsing the binary `.DCT` file on disk.
+A SharpDevelop add-in for the **Clarion 12 and Clarion 11.1 IDEs** that inspects the currently open dictionary and offers a growing catalogue of read-only and batch tools — without ever parsing the binary `.DCT` file on disk. The same DLL works in both IDEs (both load .NET 4.0 add-ins); the installer lets you pick one or both.
 
 ## Features
 
@@ -98,7 +98,7 @@ dotnet build -c Debug
 
 ## Deploy
 
-With Clarion 12 **closed** (the IDE holds a lock on its loaded DLLs), you have two options:
+With every targeted Clarion IDE **closed** (the IDE holds a lock on its loaded DLLs), you have two options:
 
 ### Option 1 — installer (for end users)
 
@@ -111,9 +111,10 @@ install\build-installer.bat
 
 which produces `install\dist\DictionaryTasker-Setup-<version>.exe`. Ship that
 single `.exe` to a Clarion developer; double-clicking it walks them through
-picking the Clarion 12 folder, writes the files into
-`<clarion>\bin\Addins\Misc\ClarionDctAddin\`, and registers an uninstaller
-under Windows "Apps & features". See `install/README.md` for details.
+picking **Clarion 12 and/or Clarion 11.1** (checkboxes — one or both), writes
+the files into `<clarion>\bin\Addins\Misc\ClarionDctAddin\` for each selected
+version, and registers an uninstaller under Windows "Apps & features". See
+`install/README.md` for details.
 
 ### Option 2 — deploy.bat (for quick local iteration)
 
@@ -127,7 +128,9 @@ copies `ClarionDctAddin.dll` + `ClarionDctAddin.addin` straight to:
 C:\clarion12\bin\Addins\Misc\ClarionDctAddin\
 ```
 
-Restart Clarion 12 and look for the **Dictionary Tasker** toolbar icon (greyed-out until a dictionary is open).
+(For Clarion 11.1 local iteration, copy to `C:\clarion11.1\bin\Addins\Misc\ClarionDctAddin\` — same two files.)
+
+Restart the Clarion IDE and look for the **Dictionary Tasker** toolbar icon (greyed-out until a dictionary is open).
 
 ## Settings
 
@@ -194,8 +197,8 @@ It's a plain key=value text file. Delete a line to reset that preference to its 
 
 ## Notes
 
-- Tested against Clarion 12.0.13941.
-- The add-in targets .NET Framework 4.0 because that's what Clarion 12 loads.
+- Tested against Clarion 12.0.13941 and Clarion 11.1.
+- The add-in targets .NET Framework 4.0 because that's what both Clarion 12 and 11.1 load.
 
 ## Credits
 
