@@ -196,10 +196,30 @@ It's a plain key=value text file. Delete a line to reset that preference to its 
 | `Settings.cs` | `%LOCALAPPDATA%` key=value settings. |
 | `docs/index.html` | Embedded HTML manual (Help button). |
 
+## Compatibility & tested versions
+
+One DLL, every supported Clarion IDE. The add-in has been exercised end-to-end with a live dictionary and the full feature catalogue on each:
+
+| Clarion version         | Default root       | Addin folder                            | Status                            |
+| ----------------------- | ------------------ | --------------------------------------- | --------------------------------- |
+| **Clarion 12** (12.0.13941) | `C:\clarion12`     | `\bin\Addins\Misc\ClarionDctAddin\`     | Primary development target. Fully tested. |
+| **Clarion 11.1**        | `C:\clarion11.1`   | `\bin\Addins\Misc\ClarionDctAddin\`     | Tested. Same DLL.                 |
+| **Clarion 11**          | `C:\clarion11`     | `\bin\Addins\Misc\ClarionDctAddin\`     | Tested. Same DLL.                 |
+| **Clarion 10**          | `C:\clarion10`     | `\bin\Addins\Misc\ClarionDctAddin\`     | Tested. Same DLL.                 |
+
+The same `ClarionDctAddin.dll` + `ClarionDctAddin.addin` work on all four because:
+
+- Every supported Clarion IDE is built on **SharpDevelop 2.1 + .NET Framework 4.0** — the add-in hosts are bytecode-compatible.
+- The add-in reaches the dictionary via reflection against a property chain (`DataDictionaryViewContent.Control → DCTContent.DCT → DDDataDictionary.Tables`) that's stable across these four releases.
+- No compile-time reference to any SoftVelocity assembly — the add-in stays portable across point releases without recompilation.
+
+Older Clarion releases (8, 9, etc.) ship a different add-in framework and are not supported.
+
 ## Notes
 
-- Tested against Clarion 10, 11, 11.1, and 12 (12.0.13941).
 - The add-in targets .NET Framework 4.0 because that's what every supported Clarion IDE loads.
+- No SoftVelocity assembly is referenced at compile time — every interaction is reflection-based, so upgrades within a major Clarion version generally Just Work.
+- Settings live in `%LOCALAPPDATA%\ClarionDctAddin\settings.txt` regardless of which Clarion version launches the add-in.
 
 ## Credits
 

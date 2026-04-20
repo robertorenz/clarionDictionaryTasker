@@ -174,7 +174,7 @@
 
 <header class="topbar">
   <h1>Dictionary Tasker</h1>
-  <div class="subtitle">User and developer manual — an add-in for the Clarion 12 IDE</div>
+  <div class="subtitle">User and developer manual — an add-in for the Clarion 10 / 11 / 11.1 / 12 IDEs</div>
 </header>
 
 <div class="shell">
@@ -241,7 +241,8 @@
   <span class="kicker">User manual · part 1</span>
   <h2>What Dictionary Tasker is</h2>
   <p>
-    Dictionary Tasker is a <strong>Clarion 12 IDE add-in</strong> that inspects the dictionary you
+    Dictionary Tasker is a <strong>Clarion IDE add-in</strong> — supported and tested on
+    <strong>Clarion 10, 11, 11.1, and 12</strong> — that inspects the dictionary you
     currently have open in the editor. It started out doing three things SoftVelocity's shipped
     editor does not — <strong>browse the dictionary in structured views</strong>,
     <strong>batch-copy fields across many tables at once</strong>, and
@@ -310,6 +311,63 @@
         (rendered greyed-out) whenever no dictionary is open; it lights up the moment a
         <code>.DCT</code> tab is active.</li>
   </ol>
+  <h3>Compatibility &amp; tested versions</h3>
+  <p>
+    Dictionary Tasker ships as a single DLL that loads into any Clarion IDE built on
+    <strong>SharpDevelop 2.1 + .NET Framework 4.0</strong>. In practice that covers the
+    last four major Clarion releases — all tested by the author with a live dictionary
+    and the full feature set exercised end-to-end.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Clarion version</th>
+        <th>Default install root</th>
+        <th>Addin folder</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Clarion 12</strong> (12.0.13941)</td>
+        <td><code>C:\clarion12</code></td>
+        <td><code>\bin\Addins\Misc\ClarionDctAddin</code></td>
+        <td>Primary development target. Fully tested.</td>
+      </tr>
+      <tr>
+        <td><strong>Clarion 11.1</strong></td>
+        <td><code>C:\clarion11.1</code></td>
+        <td><code>\bin\Addins\Misc\ClarionDctAddin</code></td>
+        <td>Tested. Same DLL.</td>
+      </tr>
+      <tr>
+        <td><strong>Clarion 11</strong></td>
+        <td><code>C:\clarion11</code></td>
+        <td><code>\bin\Addins\Misc\ClarionDctAddin</code></td>
+        <td>Tested. Same DLL.</td>
+      </tr>
+      <tr>
+        <td><strong>Clarion 10</strong></td>
+        <td><code>C:\clarion10</code></td>
+        <td><code>\bin\Addins\Misc\ClarionDctAddin</code></td>
+        <td>Tested. Same DLL.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Because the add-in reads the live dictionary via <strong>reflection</strong> rather
+    than any compile-time SoftVelocity reference (see the
+    <a href="#ref-what">Reflection deep dive</a>), it stays portable across point releases
+    and across major Clarion versions as long as the
+    <code>DataDictionaryViewContent</code> / <code>DCTContent.DCT</code> /
+    <code>DDDataDictionary.Tables</code> property chain holds — which it does across all
+    four versions above.
+  </p>
+  <p>
+    Earlier Clarion releases (8, 9, etc.) ship a different add-in framework and are
+    <em>not</em> supported. The installer won't offer them as targets.
+  </p>
+
   <div class="callout warn">
     <strong>Safety reminder:</strong> Batch operations mutate the <em>open dictionary</em>.
     The add-in always writes a timestamped <code>.bak</code> of the <code>.DCT</code> next to
@@ -1343,8 +1401,9 @@ R     &lt;name&gt;  &lt;related-table&gt;
   <span class="kicker">Developer manual · part 1</span>
   <h2>Architecture at a glance</h2>
   <p>
-    The add-in is a single <strong>.NET Framework 4.0</strong> DLL that plugs into Clarion 12's
-    IDE, which is itself <strong>SharpDevelop 2.1.x</strong> underneath. Two SharpDevelop
+    The add-in is a single <strong>.NET Framework 4.0</strong> DLL that plugs into every
+    supported Clarion IDE (10, 11, 11.1, 12), each of which is itself
+    <strong>SharpDevelop 2.1.x</strong> underneath. Two SharpDevelop
     assemblies are referenced: <code>ICSharpCode.Core</code> (manifest parser, command base classes)
     and <code>ICSharpCode.SharpDevelop</code> (workbench access).
   </p>
@@ -1720,7 +1779,7 @@ TryInvokeNoArgs(viewContent, <span class="tok-s">"OnIsDirtyChanged"</span>, nonP
   <h2>Build &amp; deploy</h2>
   <p>Requires Visual Studio with the .NET Framework 4.0 targeting pack. From the repo root:</p>
   <pre><code class="lang-text">dotnet build -c Debug</code></pre>
-  <p>Close Clarion 12, then:</p>
+  <p>Close the Clarion IDE (10, 11, 11.1, or 12 — whichever you're deploying into), then:</p>
   <pre><code class="lang-text">deploy.bat</code></pre>
   <p>which copies <code>ClarionDctAddin.dll</code> + <code>ClarionDctAddin.addin</code> to
      <code>C:\clarion12\bin\Addins\Misc\ClarionDctAddin\</code>. Relaunch Clarion.</p>
@@ -1941,7 +2000,7 @@ TryInvokeNoArgs(viewContent, <span class="tok-s">"OnIsDirtyChanged"</span>, nonP
   <p>
     Dictionary Tasker is built on the shoulders of some excellent open-source work. The
     following third-party code is either bundled directly into the add-in or referenced at
-    runtime via the Clarion 12 IDE host. All licences are compatible with bundled
+    runtime via the Clarion IDE host (10, 11, 11.1, or 12). All licences are compatible with bundled
     redistribution.
   </p>
 
@@ -1977,11 +2036,11 @@ TryInvokeNoArgs(viewContent, <span class="tok-s">"OnIsDirtyChanged"</span>, nonP
     <tbody>
       <tr>
         <td><strong>ICSharpCode.SharpDevelop 2.1</strong></td>
-        <td>Add-in host framework (the engine Clarion 12's IDE is built on).</td>
-        <td>LGPL. Loaded from <code>C:\clarion12\bin\ICSharpCode.*.dll</code>; not bundled.</td>
+        <td>Add-in host framework (the engine every supported Clarion IDE is built on).</td>
+        <td>LGPL. Loaded from <code>C:\clarionXX\bin\ICSharpCode.*.dll</code>; not bundled.</td>
       </tr>
       <tr>
-        <td><strong>SoftVelocity Clarion 12</strong></td>
+        <td><strong>SoftVelocity Clarion</strong> (10, 11, 11.1, 12)</td>
         <td>
           Hosts the add-in, supplies the live dictionary model via
           <code>SoftVelocity.DataDictionary</code>, and provides the <strong>TopScan</strong>
