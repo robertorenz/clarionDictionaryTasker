@@ -1,7 +1,7 @@
 # Installer
 
 A small [Inno Setup 6](https://jrsoftware.org/isinfo.php) script that packages the
-add-in DLL + manifest into a single `DictionaryTasker-Setup-<version>.exe` —
+add-in DLL + manifest into a single `DictionaryTasker-Setup.exe` —
 so a non-technical Clarion user can install without knowing about `deploy.bat`
 or `C:\clarionXX\bin\Addins\Misc\...`. The installer targets **Clarion 12
 and/or Clarion 11.1** — pick one or both on the Install targets page.
@@ -20,11 +20,11 @@ and/or Clarion 11.1** — pick one or both on the Install targets page.
    ```
    install\build-installer.bat
    ```
-4. Output lands in `install\dist\DictionaryTasker-Setup-1.0.0.exe`.
+4. Output lands in `install\dist\DictionaryTasker-Setup.exe`. The patch version tracked in `install\VERSION.txt` is auto-bumped on each run of the build script, so every rebuild produces a newer-versioned installer (currently `1.0.x`). The filename stays constant so the tracked installer in git is always the latest build.
 
 ## Run the installer
 
-Double-click `DictionaryTasker-Setup-1.0.0.exe`. The wizard will:
+Double-click `DictionaryTasker-Setup.exe`. The wizard will:
 
 1. Offer checkboxes for **Clarion 12** and/or **Clarion 11.1** — the same DLL
    works in both (it targets .NET 4.0, which both IDEs load). Each ticked
@@ -51,7 +51,8 @@ removed — delete that file manually if you want a fully clean slate.
 
 | File | Purpose |
 | --- | --- |
-| `setup.iss` | Inno Setup script (language, pages, Files section, custom code). |
-| `build-installer.bat` | Runs `ISCC.exe setup.iss` with a couple of sanity checks first. |
+| `setup.iss` | Inno Setup script (language, pages, Files section, custom code). Accepts `/DAppVersion=x.y.z` from the command line; falls back to a literal if invoked directly. |
+| `build-installer.bat` | Runs `ISCC.exe setup.iss` with a couple of sanity checks first; also bumps the patch in `VERSION.txt` each run. |
+| `VERSION.txt` | Single-line source of truth for the installer's patch number (`1.0.x`). The build script increments it before compiling. |
 | `readme-installed.txt` | Ships inside the installer; ends up in the Clarion addin folder next to the DLL, explaining what's there. |
-| `dist/` | Compiler output — the `.exe` lands here. Git-ignored. |
+| `dist/` | Compiler output — `DictionaryTasker-Setup.exe` (always the same filename) lands here. Git-ignored except the latest build, which is force-tracked. |

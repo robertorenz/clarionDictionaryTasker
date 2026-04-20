@@ -109,7 +109,7 @@ machine, run:
 install\build-installer.bat
 ```
 
-which produces `install\dist\DictionaryTasker-Setup-<version>.exe`. Ship that
+which produces `install\dist\DictionaryTasker-Setup.exe` (version tracked in `install/VERSION.txt` and auto-bumped on each build). Ship that
 single `.exe` to a Clarion developer; double-clicking it walks them through
 picking **Clarion 12 and/or Clarion 11.1** (checkboxes — one or both), writes
 the files into `<clarion>\bin\Addins\Misc\ClarionDctAddin\` for each selected

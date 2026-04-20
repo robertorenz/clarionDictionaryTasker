@@ -9,7 +9,13 @@
 ; or just run install\build-installer.bat from the repo root.
 
 #define AppName        "Dictionary Tasker"
-#define AppVersion     "1.0.0"
+; AppVersion is normally passed on the command line by build-installer.bat
+; (which bumps the patch in VERSION.txt each run). The #ifndef guard here
+; lets ISCC.exe be invoked directly on the .iss file without the build
+; script — useful for one-offs — in which case the fallback below is used.
+#ifndef AppVersion
+  #define AppVersion "1.0.1"
+#endif
 #define AppPublisher   "Roberto Renz"
 #define AppExeName     "ClarionDctAddin.dll"
 #define AppManifest    "ClarionDctAddin.addin"
@@ -28,7 +34,11 @@ DefaultDirName={autopf}\{#AppName}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 OutputDir=dist
-OutputBaseFilename=DictionaryTasker-Setup-{#AppVersion}
+; Filename stays version-less so the tracked installer in git is always
+; the current one. The version lives inside the .exe metadata (shown on
+; the wizard header, in Apps & features, in file Properties) and in
+; install/VERSION.txt.
+OutputBaseFilename=DictionaryTasker-Setup
 Compression=lzma2
 SolidCompression=yes
 ; Writing into C:\clarion12 / C:\clarion11 generally needs admin. If the
