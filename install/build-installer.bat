@@ -5,9 +5,9 @@ rem Build the Debug DLL, bump the patch version in install\VERSION.txt,
 rem then compile the Inno Setup script into install\dist\DictionaryTasker-Setup.exe.
 rem
 rem The patch bump means every re-run of this script produces an installer
-rem with a newer version number, so Windows / Apps & features / the wizard
-rem header always reflect that the bits have changed — no more sitting at
-rem 1.0.0 while the binary silently updates.
+rem with a newer version number, so Windows (Apps and Features, the wizard
+rem header, the .exe metadata) always reflects that the bits have changed --
+rem no more sitting at 1.0.0 while the binary silently updates.
 
 set ROOT=%~dp0..
 set DLL=%ROOT%\ClarionDctAddin\bin\Debug\ClarionDctAddin.dll
@@ -27,11 +27,11 @@ if not exist "%VERFILE%" (
   echo 1.0.0> "%VERFILE%"
 )
 
-rem Use PowerShell for the version math — cmd.exe string handling is painful
+rem Use PowerShell for the version math -- cmd.exe string handling is painful
 rem and PowerShell ships with every supported Windows. The inline script
 rem reads the file, parses major.minor.patch, increments patch, writes it
-rem back (no trailing newline so future reads are clean), and echoes the
-rem new version for the FOR loop to capture.
+rem back with no trailing newline so future reads stay clean, and echoes
+rem the new version for the FOR loop to capture.
 for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$raw = (Get-Content -LiteralPath '%VERFILE%' -Raw).Trim();" ^
     "$parts = $raw.Split('.');" ^
@@ -44,7 +44,7 @@ for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass
 )
 
 if "%VERSION%"=="" (
-  echo Version bump failed — VERSION.txt may be unreadable.
+  echo Version bump failed -- VERSION.txt may be unreadable.
   exit /b 4
 )
 
