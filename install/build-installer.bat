@@ -77,6 +77,50 @@ if errorlevel 1 (
   exit /b 3
 )
 
+set BUILT=%~dp0dist\DictionaryTasker-Setup.exe
+
+rem --- 4. sign the installer (best-effort) -----------------------------------
+rem Looks for a self-signed code-signing cert in CurrentUser\My with the
+rem expected subject. If absent, skipping the sign step is fine -- the
+rem unsigned installer still works, just with a louder SmartScreen warning.
+rem Override either value on the command line to use a different cert:
+rem   set CERT_SUBJECT=Your Name          (just the CN value, no "CN=" prefix)
+rem   set CERT_THUMBPRINT=abcd1234...
+if "%CERT_SUBJECT%"=="" set CERT_SUBJECT=Roberto Renz (Dictionary Tasker)
+if "%TIMESTAMP_URL%"=="" set TIMESTAMP_URL=http://timestamp.digicert.com
+
+set SIGNTOOL=
+for %%P in (
+  "%ProgramFiles(x86)%\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
+  "%ProgramFiles(x86)%\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+  "%ProgramFiles(x86)%\Windows Kits\10\App Certification Kit\signtool.exe"
+) do (
+  if exist %%P (
+    set "SIGNTOOL=%%~P"
+    goto :signtool_found
+  )
+)
+
 echo.
-echo Installer created: %~dp0dist\DictionaryTasker-Setup.exe  ^(version %VERSION%^)
+echo signtool.exe not found -- installer was built but not signed.
+echo Install a Windows 10/11 SDK to enable signing.
+goto :done
+
+:signtool_found
+echo.
+echo Signing with %SIGNTOOL%
+if not "%CERT_THUMBPRINT%"=="" (
+  "%SIGNTOOL%" sign /sha1 %CERT_THUMBPRINT% /fd sha256 /tr %TIMESTAMP_URL% /td sha256 /d "Dictionary Tasker" /du "https://github.com/robertorenz/clarionDictionaryTasker" "%BUILT%"
+) else (
+  "%SIGNTOOL%" sign /n "%CERT_SUBJECT%" /fd sha256 /tr %TIMESTAMP_URL% /td sha256 /d "Dictionary Tasker" /du "https://github.com/robertorenz/clarionDictionaryTasker" "%BUILT%"
+)
+if errorlevel 1 (
+  echo.
+  echo Signing failed -- installer is built but unsigned.
+  echo Check that a code-signing cert with subject "%CERT_SUBJECT%" exists in CurrentUser\My.
+)
+
+:done
+echo.
+echo Installer created: %BUILT%  ^(version %VERSION%^)
 exit /b 0

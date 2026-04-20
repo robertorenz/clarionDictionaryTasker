@@ -88,15 +88,21 @@ Type: dirifempty; Name: "{code:GetC10AddinFolder}";                 Check: Insta
 [Code]
 const
   ClarionSubPath = '\bin\Addins\Misc\ClarionDctAddin';
-  // Field indexes into PathsPage.Values[] -- keep in sync with the Add()
-  // calls in InitializeWizard below.
+  // Slot indexes -- keep in sync with the Add() order in InitializeWizard.
   IDX_C12  = 0;
   IDX_C111 = 1;
   IDX_C11  = 2;
   IDX_C10  = 3;
 
 var
+  // Page 1: checkbox list -- user picks which Clarion versions to target.
+  SelectPage: TInputOptionWizardPage;
+  // Page 2: path editor -- only shown when a ticked version wasn't auto-
+  // detected (or the user wants to adjust a detected path via the Back button).
   PathsPage: TInputDirWizardPage;
+  // Auto-detection results cached at wizard start so the checkbox labels
+  // and the path page pre-fills stay consistent.
+  DetectedC12, DetectedC111, DetectedC11, DetectedC10: String;
 
 function FirstExisting(Candidates: TArrayOfString; Fallback: String): String;
 var
@@ -113,9 +119,6 @@ begin
   Result := Fallback;
 end;
 
-// Return the detected path if we find a matching install on disk, else
-// empty string -- so the wizard pre-fills only versions that are actually
-// installed, and leaves the rest blank for the user to skip.
 function DetectOrEmpty(Candidates: TArrayOfString): String;
 var
   Found: String;
@@ -175,20 +178,90 @@ begin
   Result := DetectOrEmpty(C);
 end;
 
-// A target counts as "selected" iff the user left a path in and that
-// path has a real bin\ subfolder. Blank = skip that version.
-function IsValidTarget(Idx: Integer): Boolean;
-var
-  Path: String;
+function DetectedPathFor(Idx: Integer): String;
 begin
-  Path := PathsPage.Values[Idx];
-  Result := (Length(Trim(Path)) > 0) and DirExists(Trim(Path) + '\bin');
+  case Idx of
+    IDX_C12:  Result := DetectedC12;
+    IDX_C111: Result := DetectedC111;
+    IDX_C11:  Result := DetectedC11;
+  else
+    Result := DetectedC10;
+  end;
 end;
 
-function InstallForC12:  Boolean; begin Result := IsValidTarget(IDX_C12);  end;
-function InstallForC111: Boolean; begin Result := IsValidTarget(IDX_C111); end;
-function InstallForC11:  Boolean; begin Result := IsValidTarget(IDX_C11);  end;
-function InstallForC10:  Boolean; begin Result := IsValidTarget(IDX_C10);  end;
+function LabelFor(Idx: Integer): String;
+begin
+  case Idx of
+    IDX_C12:  Result := 'Clarion 12';
+    IDX_C111: Result := 'Clarion 11.1';
+    IDX_C11:  Result := 'Clarion 11';
+  else
+    Result := 'Clarion 10';
+  end;
+end;
+
+function OptionCaption(Idx: Integer): String;
+var
+  Detected: String;
+begin
+  Detected := DetectedPathFor(Idx);
+  if Length(Detected) > 0 then
+    Result := LabelFor(Idx) + '   (detected: ' + Detected + ')'
+  else
+    Result := LabelFor(Idx) + '   (not detected -- tick to specify a path)';
+end;
+
+function IsSelected(Idx: Integer): Boolean;
+begin
+  Result := SelectPage.Values[Idx];
+end;
+
+function AnySelected: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to 3 do
+    if IsSelected(I) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// The path page only needs to show up if at least one ticked version
+// wasn't auto-detected -- in the common case (ticked == detected) we can
+// skip straight to install.
+function NeedPathsPage: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to 3 do
+    if IsSelected(I) and (Length(DetectedPathFor(I)) = 0) then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+procedure SetRowVisible(Idx: Integer; Visible: Boolean);
+begin
+  PathsPage.PromptLabels[Idx].Visible := Visible;
+  PathsPage.Edits[Idx].Visible        := Visible;
+  PathsPage.Buttons[Idx].Visible      := Visible;
+end;
+
+function ValidPath(Path: String): Boolean;
+begin
+  Path := Trim(Path);
+  Result := (Length(Path) > 0) and DirExists(Path + '\bin');
+end;
+
+function InstallForC12:  Boolean; begin Result := IsSelected(IDX_C12)  and ValidPath(PathsPage.Values[IDX_C12]);  end;
+function InstallForC111: Boolean; begin Result := IsSelected(IDX_C111) and ValidPath(PathsPage.Values[IDX_C111]); end;
+function InstallForC11:  Boolean; begin Result := IsSelected(IDX_C11)  and ValidPath(PathsPage.Values[IDX_C11]);  end;
+function InstallForC10:  Boolean; begin Result := IsSelected(IDX_C10)  and ValidPath(PathsPage.Values[IDX_C10]);  end;
 
 function GetC12AddinFolder(Param: String):  String; begin Result := Trim(PathsPage.Values[IDX_C12])  + ClarionSubPath; end;
 function GetC111AddinFolder(Param: String): String; begin Result := Trim(PathsPage.Values[IDX_C111]) + ClarionSubPath; end;
@@ -197,16 +270,37 @@ function GetC10AddinFolder(Param: String):  String; begin Result := Trim(PathsPa
 
 procedure InitializeWizard;
 begin
-  PathsPage := CreateInputDirPage(
+  DetectedC12  := DetectClarion12;
+  DetectedC111 := DetectClarion111;
+  DetectedC11  := DetectClarion11;
+  DetectedC10  := DetectClarion10;
+
+  SelectPage := CreateInputOptionPage(
     wpWelcome,
     'Clarion installation(s)',
-    'Where are the Clarion IDEs installed on this machine?',
-    'Dictionary Tasker works with Clarion 10, 11, 11.1, and 12 -- the same ' +
-    'DLL targets .NET Framework 4.0, which every version loads. Fill in the ' +
-    'top-level folder for each Clarion you want to install into; leave a line ' +
-    'blank to skip that version. Installed versions are pre-filled automatically.' + #13#10 + #13#10 +
-    'Important: close every Clarion IDE you''re targeting before clicking Next -- ' +
-    'the IDE holds a lock on its add-in DLLs while running.',
+    'Pick one or more Clarion IDEs to install Dictionary Tasker into',
+    'Tick every Clarion installation you want to target. The same add-in ' +
+    'DLL works in all four versions (targets .NET Framework 4.0). Detected ' +
+    'installs are pre-ticked for you.' + #13#10 + #13#10 +
+    'Important: close every Clarion IDE you''re targeting before clicking ' +
+    'Next -- the IDE holds a lock on its add-in DLLs while running.',
+    False, False);
+  SelectPage.Add(OptionCaption(IDX_C12));
+  SelectPage.Add(OptionCaption(IDX_C111));
+  SelectPage.Add(OptionCaption(IDX_C11));
+  SelectPage.Add(OptionCaption(IDX_C10));
+
+  SelectPage.Values[IDX_C12]  := Length(DetectedC12)  > 0;
+  SelectPage.Values[IDX_C111] := Length(DetectedC111) > 0;
+  SelectPage.Values[IDX_C11]  := Length(DetectedC11)  > 0;
+  SelectPage.Values[IDX_C10]  := Length(DetectedC10)  > 0;
+
+  PathsPage := CreateInputDirPage(
+    SelectPage.ID,
+    'Clarion installation paths',
+    'Confirm the install folder for each selected Clarion version',
+    'Enter the top-level folder for each selected Clarion -- the one with ' +
+    '"bin" directly below it.',
     False,
     'ClarionFolders');
   PathsPage.Add('Clarion 12:');
@@ -214,54 +308,92 @@ begin
   PathsPage.Add('Clarion 11:');
   PathsPage.Add('Clarion 10:');
 
-  PathsPage.Values[IDX_C12]  := DetectClarion12;
-  PathsPage.Values[IDX_C111] := DetectClarion111;
-  PathsPage.Values[IDX_C11]  := DetectClarion11;
-  PathsPage.Values[IDX_C10]  := DetectClarion10;
+  // Pre-fill with detected paths -- used even when the path page is skipped.
+  PathsPage.Values[IDX_C12]  := DetectedC12;
+  PathsPage.Values[IDX_C111] := DetectedC111;
+  PathsPage.Values[IDX_C11]  := DetectedC11;
+  PathsPage.Values[IDX_C10]  := DetectedC10;
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if PageID = PathsPage.ID then
+    Result := not NeedPathsPage;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  I: Integer;
+begin
+  if CurPageID = PathsPage.ID then
+  begin
+    for I := 0 to 3 do
+    begin
+      if IsSelected(I) then
+      begin
+        SetRowVisible(I, True);
+        // Restore the detected path if the row was blanked on a prior visit.
+        if Length(Trim(PathsPage.Values[I])) = 0 then
+          PathsPage.Values[I] := DetectedPathFor(I);
+      end
+      else
+      begin
+        SetRowVisible(I, False);
+        // Inno's built-in validator on TInputDirWizardPage rejects blank rows
+        // with "You must enter a full path with drive letter". We never use
+        // this value (InstallForC* gates on IsSelected first), but it has to
+        // LOOK like a full path to get past Next. Sentinel we can recognise.
+        PathsPage.Values[I] := 'C:\';
+      end;
+    end;
+  end;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  AnyValid: Boolean;
-  Path: String;
   I: Integer;
-  Labels: TArrayOfString;
+  P: String;
 begin
   Result := True;
-  if CurPageID <> PathsPage.ID then
-    Exit;
 
-  SetArrayLength(Labels, 4);
-  Labels[IDX_C12]  := 'Clarion 12';
-  Labels[IDX_C111] := 'Clarion 11.1';
-  Labels[IDX_C11]  := 'Clarion 11';
-  Labels[IDX_C10]  := 'Clarion 10';
-
-  AnyValid := False;
-  for I := 0 to 3 do
+  if CurPageID = SelectPage.ID then
   begin
-    Path := Trim(PathsPage.Values[I]);
-    if Length(Path) = 0 then
-      Continue;
-    if not DirExists(Path + '\bin') then
+    if not AnySelected then
     begin
-      MsgBox('No "bin" subfolder was found under the ' + Labels[I] + ' path:' + #13#10 +
-             Path + #13#10 + #13#10 +
-             'Pick the top-level ' + Labels[I] + ' folder (the one that ' +
-             'contains "bin" directly below it), or clear the line to skip ' +
-             'installing for ' + Labels[I] + '.',
-             mbError, MB_OK);
+      MsgBox('Tick at least one Clarion version to continue.', mbError, MB_OK);
       Result := False;
-      Exit;
     end;
-    AnyValid := True;
+    Exit;
   end;
 
-  if not AnyValid then
+  if CurPageID = PathsPage.ID then
   begin
-    MsgBox('Fill in the path for at least one Clarion version -- no targets were selected.',
-           mbError, MB_OK);
-    Result := False;
+    for I := 0 to 3 do
+    begin
+      if not IsSelected(I) then
+        Continue;
+      P := Trim(PathsPage.Values[I]);
+      if Length(P) = 0 then
+      begin
+        MsgBox('Enter the ' + LabelFor(I) + ' install folder to continue, ' +
+               'or go back and untick ' + LabelFor(I) + '.',
+               mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+      if not DirExists(P + '\bin') then
+      begin
+        MsgBox('No "bin" subfolder was found under the ' + LabelFor(I) + ' path:' + #13#10 +
+               P + #13#10 + #13#10 +
+               'Pick the top-level ' + LabelFor(I) + ' folder (the one that ' +
+               'contains "bin" directly below it), or go back and untick ' +
+               LabelFor(I) + '.',
+               mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end;
   end;
 end;
 
