@@ -6,9 +6,10 @@ This folder holds the Clarion add-in DLL + manifest:
   ClarionDctAddin.dll
   ClarionDctAddin.addin
 
-The installer can target Clarion 12 and/or Clarion 11.1 — pick one or
-both on the Install targets page. The same DLL is used for both IDE
-versions; it targets .NET Framework 4.0, which both IDEs load.
+The installer can target Clarion 10, 11, 11.1, and/or 12 — pick any
+combination on the "Clarion installation(s)" page (leave a line blank
+to skip a version). The same DLL is used for all four IDE versions; it
+targets .NET Framework 4.0, which every supported Clarion IDE loads.
 
 Clarion discovers the add-in at IDE startup and the "Dictionary Tasker"
 toolbar button will appear greyed-out until you open a .DCT — then it

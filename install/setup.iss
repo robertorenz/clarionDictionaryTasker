@@ -1,18 +1,21 @@
-; Dictionary Tasker — Inno Setup script
-; Produces a single DictionaryTasker-Setup-<version>.exe that installs the
-; add-in DLL + manifest into a Clarion Addins folder. The wizard lets the
-; user pick Clarion 12, Clarion 11.1, or both — the add-in is bytecode-
-; compatible across both IDE versions, so installing to both is fine.
+; Dictionary Tasker -- Inno Setup script
+; Produces a single DictionaryTasker-Setup.exe that installs the add-in
+; DLL + manifest into any combination of Clarion 10 / 11 / 11.1 / 12
+; folders. The same DLL targets .NET Framework 4.0, which every one of
+; those IDEs loads, so installing to multiple versions from a single run
+; is supported and tested.
 ;
 ; Build with Inno Setup 6:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" install\setup.iss
-; or just run install\build-installer.bat from the repo root.
+; or run install\build-installer.bat from the repo root (which also
+; bumps install\VERSION.txt's patch number and passes it in via
+; /DAppVersion=x.y.z).
 
 #define AppName        "Dictionary Tasker"
 ; AppVersion is normally passed on the command line by build-installer.bat
 ; (which bumps the patch in VERSION.txt each run). The #ifndef guard here
 ; lets ISCC.exe be invoked directly on the .iss file without the build
-; script — useful for one-offs — in which case the fallback below is used.
+; script -- useful for one-offs -- in which case the fallback below is used.
 #ifndef AppVersion
   #define AppVersion "1.0.1"
 #endif
@@ -29,8 +32,8 @@ AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppPublisherURL=https://github.com/robertorenz/clarionDictionaryTasker
 DefaultDirName={autopf}\{#AppName}
-; We don't actually install into DefaultDirName — files go to the Clarion
-; bin folder(s) picked on the wizard's target-selection pages.
+; We don't actually install into DefaultDirName -- files go to the Clarion
+; bin folder(s) picked on the wizard's target-selection page.
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 OutputDir=dist
@@ -41,9 +44,8 @@ OutputDir=dist
 OutputBaseFilename=DictionaryTasker-Setup
 Compression=lzma2
 SolidCompression=yes
-; Writing into C:\clarion12 / C:\clarion11 generally needs admin. If the
-; user installed Clarion to a user-writable path they can still pick that
-; path on the wizard.
+; Writing into C:\clarionXX generally needs admin. If the user installed
+; Clarion to a user-writable path they can still pick that path.
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=commandline dialog
 WizardStyle=modern
@@ -55,34 +57,46 @@ UsePreviousAppDir=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Payload goes into every selected Clarion's addin folder. Each entry
-; is gated by a Check: function so we only copy where the user asked.
+; Payload goes into every selected Clarion's addin folder. Each entry is
+; gated by a Check: function so we only copy where the user asked.
 Source: "{#RepoRoot}ClarionDctAddin\bin\Debug\{#AppExeName}";   DestDir: "{code:GetC12AddinFolder}"; Flags: ignoreversion; Check: InstallForC12
 Source: "{#RepoRoot}ClarionDctAddin\{#AppManifest}";             DestDir: "{code:GetC12AddinFolder}"; Flags: ignoreversion; Check: InstallForC12
+Source: "{#RepoRoot}ClarionDctAddin\bin\Debug\{#AppExeName}";   DestDir: "{code:GetC111AddinFolder}"; Flags: ignoreversion; Check: InstallForC111
+Source: "{#RepoRoot}ClarionDctAddin\{#AppManifest}";             DestDir: "{code:GetC111AddinFolder}"; Flags: ignoreversion; Check: InstallForC111
 Source: "{#RepoRoot}ClarionDctAddin\bin\Debug\{#AppExeName}";   DestDir: "{code:GetC11AddinFolder}"; Flags: ignoreversion; Check: InstallForC11
 Source: "{#RepoRoot}ClarionDctAddin\{#AppManifest}";             DestDir: "{code:GetC11AddinFolder}"; Flags: ignoreversion; Check: InstallForC11
-; Stub file for Inno's uninstaller anchor — lands in whichever folder
+Source: "{#RepoRoot}ClarionDctAddin\bin\Debug\{#AppExeName}";   DestDir: "{code:GetC10AddinFolder}"; Flags: ignoreversion; Check: InstallForC10
+Source: "{#RepoRoot}ClarionDctAddin\{#AppManifest}";             DestDir: "{code:GetC10AddinFolder}"; Flags: ignoreversion; Check: InstallForC10
+; Stub file for Inno's uninstaller anchor -- lands in whichever folder
 ; ends up being {app} (see CurStepChanged below).
 Source: "{#RepoRoot}install\readme-installed.txt";               DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallDelete]
-Type: files;      Name: "{code:GetC12AddinFolder}\{#AppExeName}"; Check: InstallForC12
+Type: files;      Name: "{code:GetC12AddinFolder}\{#AppExeName}";  Check: InstallForC12
 Type: files;      Name: "{code:GetC12AddinFolder}\{#AppManifest}"; Check: InstallForC12
-Type: dirifempty; Name: "{code:GetC12AddinFolder}";                Check: InstallForC12
-Type: files;      Name: "{code:GetC11AddinFolder}\{#AppExeName}"; Check: InstallForC11
+Type: dirifempty; Name: "{code:GetC12AddinFolder}";                 Check: InstallForC12
+Type: files;      Name: "{code:GetC111AddinFolder}\{#AppExeName}"; Check: InstallForC111
+Type: files;      Name: "{code:GetC111AddinFolder}\{#AppManifest}"; Check: InstallForC111
+Type: dirifempty; Name: "{code:GetC111AddinFolder}";                Check: InstallForC111
+Type: files;      Name: "{code:GetC11AddinFolder}\{#AppExeName}";  Check: InstallForC11
 Type: files;      Name: "{code:GetC11AddinFolder}\{#AppManifest}"; Check: InstallForC11
-Type: dirifempty; Name: "{code:GetC11AddinFolder}";                Check: InstallForC11
+Type: dirifempty; Name: "{code:GetC11AddinFolder}";                 Check: InstallForC11
+Type: files;      Name: "{code:GetC10AddinFolder}\{#AppExeName}";  Check: InstallForC10
+Type: files;      Name: "{code:GetC10AddinFolder}\{#AppManifest}"; Check: InstallForC10
+Type: dirifempty; Name: "{code:GetC10AddinFolder}";                 Check: InstallForC10
 
 [Code]
 const
-  ClarionSubPath   = '\bin\Addins\Misc\ClarionDctAddin';
-  DefaultClarion12 = 'C:\clarion12';
-  DefaultClarion11 = 'C:\clarion11.1';
+  ClarionSubPath = '\bin\Addins\Misc\ClarionDctAddin';
+  // Field indexes into PathsPage.Values[] -- keep in sync with the Add()
+  // calls in InitializeWizard below.
+  IDX_C12  = 0;
+  IDX_C111 = 1;
+  IDX_C11  = 2;
+  IDX_C10  = 3;
 
 var
-  TargetsPage: TInputOptionWizardPage;   // checkboxes: install for C12? C11.1?
-  C12Page:     TInputDirWizardPage;      // Clarion 12 path, skipped if unchecked
-  C11Page:     TInputDirWizardPage;      // Clarion 11.1 path, skipped if unchecked
+  PathsPage: TInputDirWizardPage;
 
 function FirstExisting(Candidates: TArrayOfString; Fallback: String): String;
 var
@@ -99,6 +113,20 @@ begin
   Result := Fallback;
 end;
 
+// Return the detected path if we find a matching install on disk, else
+// empty string -- so the wizard pre-fills only versions that are actually
+// installed, and leaves the rest blank for the user to skip.
+function DetectOrEmpty(Candidates: TArrayOfString): String;
+var
+  Found: String;
+begin
+  Found := FirstExisting(Candidates, '');
+  if (Length(Found) > 0) and DirExists(Found + '\bin') then
+    Result := Found
+  else
+    Result := '';
+end;
+
 function DetectClarion12: String;
 var
   C: TArrayOfString;
@@ -107,147 +135,149 @@ begin
   C[0] := ExpandConstant('{sd}\clarion12');
   C[1] := ExpandConstant('{pf}\SoftVelocity\Clarion 12');
   C[2] := ExpandConstant('{pf32}\SoftVelocity\Clarion 12');
-  C[3] := DefaultClarion12;
-  Result := FirstExisting(C, DefaultClarion12);
+  C[3] := 'C:\clarion12';
+  Result := DetectOrEmpty(C);
+end;
+
+function DetectClarion111: String;
+var
+  C: TArrayOfString;
+begin
+  SetArrayLength(C, 4);
+  C[0] := ExpandConstant('{sd}\clarion11.1');
+  C[1] := ExpandConstant('{pf}\SoftVelocity\Clarion 11.1');
+  C[2] := ExpandConstant('{pf32}\SoftVelocity\Clarion 11.1');
+  C[3] := 'C:\clarion11.1';
+  Result := DetectOrEmpty(C);
 end;
 
 function DetectClarion11: String;
 var
   C: TArrayOfString;
 begin
-  SetArrayLength(C, 6);
-  C[0] := ExpandConstant('{sd}\clarion11.1');
-  C[1] := ExpandConstant('{sd}\clarion11');
-  C[2] := ExpandConstant('{pf}\SoftVelocity\Clarion 11.1');
-  C[3] := ExpandConstant('{pf32}\SoftVelocity\Clarion 11.1');
-  C[4] := ExpandConstant('{pf}\SoftVelocity\Clarion 11');
-  C[5] := ExpandConstant('{pf32}\SoftVelocity\Clarion 11');
-  Result := FirstExisting(C, DefaultClarion11);
+  SetArrayLength(C, 4);
+  C[0] := ExpandConstant('{sd}\clarion11');
+  C[1] := ExpandConstant('{pf}\SoftVelocity\Clarion 11');
+  C[2] := ExpandConstant('{pf32}\SoftVelocity\Clarion 11');
+  C[3] := 'C:\clarion11';
+  Result := DetectOrEmpty(C);
 end;
 
-function InstallForC12(): Boolean;
+function DetectClarion10: String;
+var
+  C: TArrayOfString;
 begin
-  Result := TargetsPage.Values[0];
+  SetArrayLength(C, 4);
+  C[0] := ExpandConstant('{sd}\clarion10');
+  C[1] := ExpandConstant('{pf}\SoftVelocity\Clarion 10');
+  C[2] := ExpandConstant('{pf32}\SoftVelocity\Clarion 10');
+  C[3] := 'C:\clarion10';
+  Result := DetectOrEmpty(C);
 end;
 
-function InstallForC11(): Boolean;
+// A target counts as "selected" iff the user left a path in and that
+// path has a real bin\ subfolder. Blank = skip that version.
+function IsValidTarget(Idx: Integer): Boolean;
+var
+  Path: String;
 begin
-  Result := TargetsPage.Values[1];
+  Path := PathsPage.Values[Idx];
+  Result := (Length(Trim(Path)) > 0) and DirExists(Trim(Path) + '\bin');
 end;
+
+function InstallForC12:  Boolean; begin Result := IsValidTarget(IDX_C12);  end;
+function InstallForC111: Boolean; begin Result := IsValidTarget(IDX_C111); end;
+function InstallForC11:  Boolean; begin Result := IsValidTarget(IDX_C11);  end;
+function InstallForC10:  Boolean; begin Result := IsValidTarget(IDX_C10);  end;
+
+function GetC12AddinFolder(Param: String):  String; begin Result := Trim(PathsPage.Values[IDX_C12])  + ClarionSubPath; end;
+function GetC111AddinFolder(Param: String): String; begin Result := Trim(PathsPage.Values[IDX_C111]) + ClarionSubPath; end;
+function GetC11AddinFolder(Param: String):  String; begin Result := Trim(PathsPage.Values[IDX_C11])  + ClarionSubPath; end;
+function GetC10AddinFolder(Param: String):  String; begin Result := Trim(PathsPage.Values[IDX_C10])  + ClarionSubPath; end;
 
 procedure InitializeWizard;
 begin
-  TargetsPage := CreateInputOptionPage(
+  PathsPage := CreateInputDirPage(
     wpWelcome,
-    'Install targets',
-    'Which Clarion IDE(s) do you want to install Dictionary Tasker into?',
-    'The add-in works with both Clarion 12 and Clarion 11.1. Tick one or ' +
-    'both — you''ll be asked for the install folder on the next page(s).' + #13#10 + #13#10 +
-    'Important: close every Clarion IDE you''re targeting before clicking Next — ' +
+    'Clarion installation(s)',
+    'Where are the Clarion IDEs installed on this machine?',
+    'Dictionary Tasker works with Clarion 10, 11, 11.1, and 12 -- the same ' +
+    'DLL targets .NET Framework 4.0, which every version loads. Fill in the ' +
+    'top-level folder for each Clarion you want to install into; leave a line ' +
+    'blank to skip that version. Installed versions are pre-filled automatically.' + #13#10 + #13#10 +
+    'Important: close every Clarion IDE you''re targeting before clicking Next -- ' +
     'the IDE holds a lock on its add-in DLLs while running.',
-    False,   { Exclusive = False → checkboxes, multi-select allowed }
-    False);  { ListBox  = False → render as checkboxes, not a listbox }
-  TargetsPage.Add('Clarion 12');
-  TargetsPage.Add('Clarion 11.1');
-  { Default: pre-tick whichever version we can actually find. If neither
-    is detected, pre-tick C12 so the user at least has a starting path. }
-  TargetsPage.Values[0] := DirExists(DetectClarion12 + '\bin');
-  TargetsPage.Values[1] := DirExists(DetectClarion11 + '\bin');
-  if (not TargetsPage.Values[0]) and (not TargetsPage.Values[1]) then
-    TargetsPage.Values[0] := True;
-
-  C12Page := CreateInputDirPage(
-    TargetsPage.ID,
-    'Clarion 12 location',
-    'Where is Clarion 12 installed on this machine?',
-    'Pick the top-level Clarion 12 folder (the one that contains "bin" ' +
-    'directly below it).',
     False,
-    'Clarion12Folder');
-  C12Page.Add('');
-  C12Page.Values[0] := DetectClarion12;
+    'ClarionFolders');
+  PathsPage.Add('Clarion 12:');
+  PathsPage.Add('Clarion 11.1:');
+  PathsPage.Add('Clarion 11:');
+  PathsPage.Add('Clarion 10:');
 
-  C11Page := CreateInputDirPage(
-    C12Page.ID,
-    'Clarion 11.1 location',
-    'Where is Clarion 11.1 installed on this machine?',
-    'Pick the top-level Clarion 11.1 folder (the one that contains "bin" ' +
-    'directly below it).',
-    False,
-    'Clarion11Folder');
-  C11Page.Add('');
-  C11Page.Values[0] := DetectClarion11;
-end;
-
-{ Skip the per-version path page if that version isn't ticked. }
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := False;
-  if (PageID = C12Page.ID) and (not TargetsPage.Values[0]) then
-    Result := True;
-  if (PageID = C11Page.ID) and (not TargetsPage.Values[1]) then
-    Result := True;
+  PathsPage.Values[IDX_C12]  := DetectClarion12;
+  PathsPage.Values[IDX_C111] := DetectClarion111;
+  PathsPage.Values[IDX_C11]  := DetectClarion11;
+  PathsPage.Values[IDX_C10]  := DetectClarion10;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  Root: String;
+  AnyValid: Boolean;
+  Path: String;
+  I: Integer;
+  Labels: TArrayOfString;
 begin
   Result := True;
-  if CurPageID = TargetsPage.ID then
+  if CurPageID <> PathsPage.ID then
+    Exit;
+
+  SetArrayLength(Labels, 4);
+  Labels[IDX_C12]  := 'Clarion 12';
+  Labels[IDX_C111] := 'Clarion 11.1';
+  Labels[IDX_C11]  := 'Clarion 11';
+  Labels[IDX_C10]  := 'Clarion 10';
+
+  AnyValid := False;
+  for I := 0 to 3 do
   begin
-    if (not TargetsPage.Values[0]) and (not TargetsPage.Values[1]) then
+    Path := Trim(PathsPage.Values[I]);
+    if Length(Path) = 0 then
+      Continue;
+    if not DirExists(Path + '\bin') then
     begin
-      MsgBox('Pick at least one Clarion version to install into.',
+      MsgBox('No "bin" subfolder was found under the ' + Labels[I] + ' path:' + #13#10 +
+             Path + #13#10 + #13#10 +
+             'Pick the top-level ' + Labels[I] + ' folder (the one that ' +
+             'contains "bin" directly below it), or clear the line to skip ' +
+             'installing for ' + Labels[I] + '.',
              mbError, MB_OK);
       Result := False;
       Exit;
     end;
-  end
-  else if CurPageID = C12Page.ID then
+    AnyValid := True;
+  end;
+
+  if not AnyValid then
   begin
-    Root := C12Page.Values[0];
-    if not DirExists(Root + '\bin') then
-    begin
-      MsgBox('No "bin" subfolder was found under' + #13#10 + Root + #13#10 + #13#10 +
-             'Pick the top-level Clarion 12 folder (the one that contains "bin" directly below it).',
-             mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-  end
-  else if CurPageID = C11Page.ID then
-  begin
-    Root := C11Page.Values[0];
-    if not DirExists(Root + '\bin') then
-    begin
-      MsgBox('No "bin" subfolder was found under' + #13#10 + Root + #13#10 + #13#10 +
-             'Pick the top-level Clarion 11.1 folder (the one that contains "bin" directly below it).',
-             mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
+    MsgBox('Fill in the path for at least one Clarion version -- no targets were selected.',
+           mbError, MB_OK);
+    Result := False;
   end;
 end;
 
-function GetC12AddinFolder(Param: String): String;
-begin
-  Result := C12Page.Values[0] + ClarionSubPath;
-end;
-
-function GetC11AddinFolder(Param: String): String;
-begin
-  Result := C11Page.Values[0] + ClarionSubPath;
-end;
-
 // {app} anchors the uninstaller. Use whichever selected version comes
-// first (C12 preferred) so the readme + uninstall hook land there.
+// first (C12 > C11.1 > C11 > C10) so the readme + uninstall hook land
+// in a stable, preferred folder.
 function GetPrimaryAddinFolder: String;
 begin
   if InstallForC12 then
     Result := GetC12AddinFolder('')
+  else if InstallForC111 then
+    Result := GetC111AddinFolder('')
+  else if InstallForC11 then
+    Result := GetC11AddinFolder('')
   else
-    Result := GetC11AddinFolder('');
+    Result := GetC10AddinFolder('');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

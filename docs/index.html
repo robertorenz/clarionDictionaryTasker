@@ -275,8 +275,9 @@
   <h2>Installing and deploying</h2>
   <p>
     The add-in ships as a single DLL plus an <code>.addin</code> manifest, bytecode-compatible
-    with both <strong>Clarion 12</strong> and <strong>Clarion 11.1</strong> (both IDEs load
-    .NET 4.0 add-ins from the same folder layout). Two ways to install:
+    with <strong>Clarion 10, 11, 11.1, and 12</strong> (every supported Clarion IDE loads
+    .NET 4.0 add-ins from the same <code>bin\Addins\Misc\</code> folder layout). Two ways
+    to install:
   </p>
 
   <h3>Option 1 — installer (for end users)</h3>
@@ -284,12 +285,14 @@
     <code>install\build-installer.bat</code> (requires Inno Setup 6) produces a single
     <code>DictionaryTasker-Setup.exe</code> under <code>install\dist\</code>
     (version tracked in <code>install\VERSION.txt</code>, auto-bumped on each rebuild).
-    The wizard offers checkboxes for <strong>Clarion 12</strong> and <strong>Clarion 11.1</strong> —
-    tick one or both. For each ticked version it auto-detects the install root
-    (<code>C:\clarion12</code>, <code>C:\clarion11.1</code>, or the
-    <code>%ProgramFiles%\SoftVelocity\Clarion&nbsp;XX</code> variants), warns to close the IDE,
-    and copies the DLL + manifest to the right <code>Addins\Misc\ClarionDctAddin\</code>
-    subfolder. Registers itself under Windows "Apps &amp; features" for clean uninstall.
+    The wizard shows a single page with four path entries (<strong>Clarion 12</strong>,
+    <strong>Clarion 11.1</strong>, <strong>Clarion 11</strong>, <strong>Clarion 10</strong>) —
+    fill in the ones you want, leave the rest blank. Each entry is pre-populated from
+    auto-detection (<code>C:\clarionXX</code>, <code>%ProgramFiles%\SoftVelocity\Clarion&nbsp;XX</code>,
+    or the (x86) variants). The wizard warns to close every targeted IDE, then copies the
+    DLL + manifest into the right <code>Addins\Misc\ClarionDctAddin\</code> subfolder for
+    each filled-in version. Registers itself under Windows "Apps &amp; features" for
+    clean uninstall — the uninstaller sweeps every folder the installer wrote to.
   </p>
 
   <h3>Option 2 — deploy.bat (for quick local iteration)</h3>
@@ -297,10 +300,10 @@
     <li><strong>Close the Clarion IDE you're targeting.</strong> Clarion holds a lock on its
         add-in folder while running.</li>
     <li>Copy <code>ClarionDctAddin.dll</code> and <code>ClarionDctAddin.addin</code> into
-        <code>C:\clarion12\bin\Addins\Misc\ClarionDctAddin\</code> (or the equivalent
-        <code>C:\clarion11.1\bin\Addins\Misc\ClarionDctAddin\</code> for Clarion 11.1). The
-        repo ships a <code>deploy.bat</code> that does the Clarion 12 copy from the build
-        output; duplicate it with the right path for Clarion 11.1.</li>
+        <code>C:\clarionXX\bin\Addins\Misc\ClarionDctAddin\</code> where <code>XX</code> is
+        <code>10</code>, <code>11</code>, <code>11.1</code>, or <code>12</code>. The repo
+        ships a <code>deploy.bat</code> that does the Clarion 12 copy from the build output;
+        duplicate it with the right path for any other version you're running.</li>
     <li>Launch the Clarion IDE. A new button with the Dictionary Tasker icon (book +
         magnifier) appears on the Standard toolbar. Clicking it is the sole entry point — the
         add-in does not add any main-menu entries. The button is <strong>disabled</strong>

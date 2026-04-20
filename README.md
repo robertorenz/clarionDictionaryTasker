@@ -1,6 +1,6 @@
 # clarionDictionaryTasker
 
-A SharpDevelop add-in for the **Clarion 12 and Clarion 11.1 IDEs** that inspects the currently open dictionary and offers a growing catalogue of read-only and batch tools — without ever parsing the binary `.DCT` file on disk. The same DLL works in both IDEs (both load .NET 4.0 add-ins); the installer lets you pick one or both.
+A SharpDevelop add-in for **Clarion 10, 11, 11.1, and 12 IDEs** that inspects the currently open dictionary and offers a growing catalogue of read-only and batch tools — without ever parsing the binary `.DCT` file on disk. The same DLL works in all four IDEs (every supported Clarion loads .NET 4.0 add-ins from the same folder layout); the installer lets you pick any combination.
 
 ## Features
 
@@ -111,8 +111,9 @@ install\build-installer.bat
 
 which produces `install\dist\DictionaryTasker-Setup.exe` (version tracked in `install/VERSION.txt` and auto-bumped on each build). Ship that
 single `.exe` to a Clarion developer; double-clicking it walks them through
-picking **Clarion 12 and/or Clarion 11.1** (checkboxes — one or both), writes
-the files into `<clarion>\bin\Addins\Misc\ClarionDctAddin\` for each selected
+picking any combination of **Clarion 10, 11, 11.1, and 12** (one path per
+version on a single page — leave a line blank to skip), writes the files
+into `<clarion>\bin\Addins\Misc\ClarionDctAddin\` for each filled-in
 version, and registers an uninstaller under Windows "Apps & features". See
 `install/README.md` for details.
 
@@ -128,7 +129,7 @@ copies `ClarionDctAddin.dll` + `ClarionDctAddin.addin` straight to:
 C:\clarion12\bin\Addins\Misc\ClarionDctAddin\
 ```
 
-(For Clarion 11.1 local iteration, copy to `C:\clarion11.1\bin\Addins\Misc\ClarionDctAddin\` — same two files.)
+(For Clarion 10 / 11 / 11.1 local iteration, copy to `C:\clarion10\bin\Addins\Misc\ClarionDctAddin\` or the equivalent `clarion11` / `clarion11.1` path — same two files.)
 
 Restart the Clarion IDE and look for the **Dictionary Tasker** toolbar icon (greyed-out until a dictionary is open).
 
@@ -197,8 +198,8 @@ It's a plain key=value text file. Delete a line to reset that preference to its 
 
 ## Notes
 
-- Tested against Clarion 12.0.13941 and Clarion 11.1.
-- The add-in targets .NET Framework 4.0 because that's what both Clarion 12 and 11.1 load.
+- Tested against Clarion 10, 11, 11.1, and 12 (12.0.13941).
+- The add-in targets .NET Framework 4.0 because that's what every supported Clarion IDE loads.
 
 ## Credits
 
