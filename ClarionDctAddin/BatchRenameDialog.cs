@@ -19,7 +19,7 @@ namespace ClarionDctAddin
 
         readonly object dict;
         TextBox  txtPattern, txtReplacement, txtTableFilter;
-        CheckBox chkLabel, chkDesc, chkHeading, chkPrompt, chkIgnoreCase;
+        CheckBox chkLabel, chkDesc, chkHeading, chkPrompt, chkIgnoreCase, chkExcludeAliases;
         ListView lv;
         Label    lblSummary;
         Button   btnApply;
@@ -72,7 +72,9 @@ namespace ClarionDctAddin
             var lblTF = new Label { Text = "Table filter (regex, blank = all):", Left = 4, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
             txtTableFilter = new TextBox { Left = 206, Top = 4, Width = 220, Font = new Font("Consolas", 10F) };
             chkIgnoreCase  = new CheckBox { Text = "Case-insensitive", Left = 444, Top = 6, AutoSize = true, Checked = true, Font = new Font("Segoe UI", 9F) };
-            row2.Controls.Add(lblTF); row2.Controls.Add(txtTableFilter); row2.Controls.Add(chkIgnoreCase);
+            chkExcludeAliases = new CheckBox { Text = "Exclude aliases", Left = 576, Top = 6, AutoSize = true, Checked = Settings.BatchExcludeAliases, Font = new Font("Segoe UI", 9F) };
+            chkExcludeAliases.CheckedChanged += delegate { Settings.BatchExcludeAliases = chkExcludeAliases.Checked; };
+            row2.Controls.Add(lblTF); row2.Controls.Add(txtTableFilter); row2.Controls.Add(chkIgnoreCase); row2.Controls.Add(chkExcludeAliases);
 
             var row3 = new Panel { Dock = DockStyle.Top, Height = 40, BackColor = BgColor, Padding = new Padding(16, 6, 16, 0) };
             chkLabel   = new CheckBox { Text = "Label",       Left = 4,   Top = 6, AutoSize = true, Checked = true,  Font = new Font("Segoe UI", 9F) };
@@ -156,8 +158,10 @@ namespace ClarionDctAddin
             if (chkPrompt.Checked)  props.Add("Prompt");
             if (props.Count == 0)   { lv.EndUpdate(); lblSummary.Text = "Pick at least one property."; return; }
 
+            bool excludeAliases = chkExcludeAliases != null && chkExcludeAliases.Checked;
             foreach (var t in DictModel.GetTables(dict))
             {
+                if (excludeAliases && DictModel.IsAlias(t)) continue;
                 var tName = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "";
                 if (tableRe != null && !tableRe.IsMatch(tName)) continue;
                 foreach (var f in FieldMutator.EnumerateFields(t))

@@ -419,7 +419,9 @@ namespace ClarionDctAddin
             // detection only.
             var scoped = new HashSet<object>();
             if (singleTable != null) scoped.Add(singleTable);
-            else foreach (var t in DictModel.GetTables(dict)) scoped.Add(t);
+            else foreach (var t in DictModel.GetTables(dict))
+                if (!Settings.BatchExcludeAliases || !DictModel.IsAlias(t))
+                    scoped.Add(t);
 
             // Snapshot every OUT-OF-SCOPE key's ExternalName so we can diff the
             // in-scope keys against them. Stays constant while the dialog is open

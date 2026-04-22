@@ -24,6 +24,12 @@ namespace ClarionDctAddin
         RadioButton rbSkip;
         RadioButton rbAbort;
         Label lblWarning;
+        CheckBox chkExcludeAliases;
+
+        // Snapshot of `tables` filtered by the current "Exclude aliases"
+        // checkbox — kept in sync with the combo and targets list so
+        // CurrentSourceTable can index back into it.
+        readonly List<object> visibleTables = new List<object>();
 
         public BatchCopyDialog(object dict)
         {
@@ -176,9 +182,24 @@ namespace ClarionDctAddin
             var lbl = new Label { Text = "If a field with the same name already exists in a target table:", Left = 0, Top = 4, Width = 420, AutoSize = true, Font = new Font("Segoe UI", 9F) };
             rbSkip  = new RadioButton { Text = "Skip that field (recommended)", Left = 0,   Top = 24, Width = 240, Checked = true,  Font = new Font("Segoe UI", 9F) };
             rbAbort = new RadioButton { Text = "Abort the whole batch",         Left = 260, Top = 24, Width = 220, Font = new Font("Segoe UI", 9F) };
+            chkExcludeAliases = new CheckBox
+            {
+                Text = "Exclude aliases",
+                Left = 500, Top = 24,
+                AutoSize = true,
+                Checked = Settings.BatchExcludeAliases,
+                Font = new Font("Segoe UI", 9F)
+            };
+            chkExcludeAliases.CheckedChanged += delegate
+            {
+                Settings.BatchExcludeAliases = chkExcludeAliases.Checked;
+                PopulateSourceCombo();
+                PopulateSourceFieldsAndTargets();
+            };
             host.Controls.Add(lbl);
             host.Controls.Add(rbSkip);
             host.Controls.Add(rbAbort);
+            host.Controls.Add(chkExcludeAliases);
         }
 
         static ListView MakeListView()
@@ -211,15 +232,23 @@ namespace ClarionDctAddin
         // --- data ---
         void PopulateSourceCombo()
         {
+            bool excludeAliases = chkExcludeAliases == null || chkExcludeAliases.Checked;
+            visibleTables.Clear();
             cboSource.Items.Clear();
             foreach (var t in tables)
-                cboSource.Items.Add(DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?");
+            {
+                if (excludeAliases && DictModel.IsAlias(t)) continue;
+                visibleTables.Add(t);
+                var display = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
+                if (DictModel.IsAlias(t)) display += "  (alias)";
+                cboSource.Items.Add(display);
+            }
             if (cboSource.Items.Count > 0) cboSource.SelectedIndex = 0;
         }
 
         object CurrentSourceTable
         {
-            get { return cboSource.SelectedIndex < 0 ? null : tables[cboSource.SelectedIndex]; }
+            get { return cboSource.SelectedIndex < 0 || cboSource.SelectedIndex >= visibleTables.Count ? null : visibleTables[cboSource.SelectedIndex]; }
         }
 
         void PopulateSourceFieldsAndTargets()
@@ -257,17 +286,20 @@ namespace ClarionDctAddin
 
         void PopulateTargets()
         {
+            bool excludeAliases = chkExcludeAliases == null || chkExcludeAliases.Checked;
             lvTargets.BeginUpdate();
             lvTargets.Items.Clear();
             var source = CurrentSourceTable;
             foreach (var t in tables)
             {
+                if (excludeAliases && DictModel.IsAlias(t)) continue;
                 if (ReferenceEquals(t, source)) continue;
                 var name    = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "";
                 var prefix  = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "";
                 var drv     = DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "";
                 var fCount  = DictModel.CountEnumerable(t, "Fields");
-                var item    = new ListViewItem(new[] { name, prefix, drv, fCount.ToString() });
+                var display = DictModel.IsAlias(t) ? name + "  (alias)" : name;
+                var item    = new ListViewItem(new[] { display, prefix, drv, fCount.ToString() });
                 item.Tag = t;
                 lvTargets.Items.Add(item);
             }

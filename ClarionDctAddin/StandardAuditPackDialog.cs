@@ -39,6 +39,7 @@ namespace ClarionDctAddin
         RadioButton rbSkip, rbAbort;
         Button btnApply, btnSaveRecipe;
         Label lblSummary;
+        CheckBox chkExcludeAliases;
 
         List<object> tables;
         List<object> matchedFields = new List<object>();  // parallel to lstPackFields items
@@ -71,7 +72,16 @@ namespace ClarionDctAddin
             var lblTpl = new Label { Text = "Template table (source of audit field definitions):", Left = 4, Top = 8, AutoSize = true, Font = new Font("Segoe UI", 9F) };
             cbTemplate = new ComboBox { Left = 320, Top = 4, Width = 360, DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9F) };
             cbTemplate.SelectedIndexChanged += delegate { MatchPresets(); UpdateSummary(); };
-            row1.Controls.Add(lblTpl); row1.Controls.Add(cbTemplate);
+            chkExcludeAliases = new CheckBox { Text = "Exclude aliases", Left = 700, Top = 6, AutoSize = true, Checked = Settings.BatchExcludeAliases, Font = new Font("Segoe UI", 9F) };
+            chkExcludeAliases.CheckedChanged += delegate
+            {
+                Settings.BatchExcludeAliases = chkExcludeAliases.Checked;
+                cbTemplate.Items.Clear();
+                lstTargets.Items.Clear();
+                PopulateTables();
+                SuggestTemplate();
+            };
+            row1.Controls.Add(lblTpl); row1.Controls.Add(cbTemplate); row1.Controls.Add(chkExcludeAliases);
 
             lblSummary = new Label
             {
@@ -212,14 +222,17 @@ namespace ClarionDctAddin
 
         void PopulateTables()
         {
+            bool excludeAliases = chkExcludeAliases == null || chkExcludeAliases.Checked;
             tables = DictModel.GetTables(dict)
+                .Where(t => !excludeAliases || !DictModel.IsAlias(t))
                 .OrderBy(t => DictModel.AsString(DictModel.GetProp(t, "Name")), StringComparer.OrdinalIgnoreCase)
                 .ToList();
             foreach (var t in tables)
             {
                 var n = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
-                cbTemplate.Items.Add(n);
-                lstTargets.Items.Add(n, false);
+                var display = DictModel.IsAlias(t) ? n + "  (alias)" : n;
+                cbTemplate.Items.Add(display);
+                lstTargets.Items.Add(display, false);
             }
         }
 

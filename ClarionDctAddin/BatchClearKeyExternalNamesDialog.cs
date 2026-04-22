@@ -30,6 +30,7 @@ namespace ClarionDctAddin
         Label    lblTablesSummary;
         Label    lblPreviewSummary;
         Button   btnApply;
+        CheckBox chkExcludeAliases;
 
         List<PlanItem> currentPlan = new List<PlanItem>();
 
@@ -137,10 +138,25 @@ namespace ClarionDctAddin
 
             var filter = new Panel { Dock = DockStyle.Top, Height = 32, BackColor = BgColor, Padding = new Padding(0, 4, 0, 4) };
             var lf = new Label { Text = "Filter:", Left = 0, Top = 6, Width = 40, Font = new Font("Segoe UI", 9F) };
-            txtFilter = new TextBox { Left = 44, Top = 2, Width = 260, Font = new Font("Segoe UI", 9.5F) };
+            txtFilter = new TextBox { Left = 44, Top = 2, Width = 220, Font = new Font("Segoe UI", 9.5F) };
             txtFilter.TextChanged += delegate { ApplyFilter(); };
+            chkExcludeAliases = new CheckBox
+            {
+                Text = "Exclude aliases",
+                Left = 274, Top = 4,
+                AutoSize = true,
+                Checked = Settings.BatchExcludeAliases,
+                Font = new Font("Segoe UI", 9F)
+            };
+            chkExcludeAliases.CheckedChanged += delegate
+            {
+                Settings.BatchExcludeAliases = chkExcludeAliases.Checked;
+                ApplyFilter();
+                RefreshPreview();
+            };
             filter.Controls.Add(lf);
             filter.Controls.Add(txtFilter);
+            filter.Controls.Add(chkExcludeAliases);
 
             lvTables = new ListView
             {
@@ -234,14 +250,17 @@ namespace ClarionDctAddin
         {
             lvTables.BeginUpdate();
             lvTables.Items.Clear();
+            bool excludeAliases = chkExcludeAliases == null || chkExcludeAliases.Checked;
             foreach (var t in tables)
             {
+                if (excludeAliases && DictModel.IsAlias(t)) continue;
                 var name   = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
                 var prefix = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "";
                 var drv    = DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "";
                 int keyCount, namedCount;
                 CountKeys(t, out keyCount, out namedCount);
-                var item = new ListViewItem(new[] { name, prefix, drv, keyCount.ToString(), namedCount.ToString() });
+                var display = DictModel.IsAlias(t) ? name + "  (alias)" : name;
+                var item = new ListViewItem(new[] { display, prefix, drv, keyCount.ToString(), namedCount.ToString() });
                 item.Tag = t;
                 lvTables.Items.Add(item);
             }
@@ -266,17 +285,20 @@ namespace ClarionDctAddin
         void ApplyFilter()
         {
             var q = (txtFilter.Text ?? "").Trim();
+            bool excludeAliases = chkExcludeAliases == null || chkExcludeAliases.Checked;
             lvTables.BeginUpdate();
             lvTables.Items.Clear();
             foreach (var t in tables)
             {
+                if (excludeAliases && DictModel.IsAlias(t)) continue;
                 var name = DictModel.AsString(DictModel.GetProp(t, "Name")) ?? "?";
                 if (q.Length > 0 && name.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
                 var prefix = DictModel.AsString(DictModel.GetProp(t, "Prefix")) ?? "";
                 var drv    = DictModel.AsString(DictModel.GetProp(t, "FileDriverName")) ?? "";
                 int keyCount, namedCount;
                 CountKeys(t, out keyCount, out namedCount);
-                var item = new ListViewItem(new[] { name, prefix, drv, keyCount.ToString(), namedCount.ToString() });
+                var display = DictModel.IsAlias(t) ? name + "  (alias)" : name;
+                var item = new ListViewItem(new[] { display, prefix, drv, keyCount.ToString(), namedCount.ToString() });
                 item.Tag = t;
                 lvTables.Items.Add(item);
             }

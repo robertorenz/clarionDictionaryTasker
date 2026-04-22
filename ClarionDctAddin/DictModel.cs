@@ -81,6 +81,20 @@ namespace ClarionDctAddin
             return list;
         }
 
+        // True when the given DDFile is an alias (shares its Fields/Keys
+        // with a base table). Write tools default to filtering these out
+        // because editing an alias-shared field/key mutates the base too —
+        // doing the same write twice against the same underlying object.
+        public static bool IsAlias(object table)
+        {
+            if (table == null) return false;
+            var v = GetProp(table, "IsAlias");
+            if (v == null) return false;
+            if (v is bool b) return b;
+            bool parsed;
+            return bool.TryParse(v.ToString(), out parsed) && parsed;
+        }
+
         // Returns every DDFile in the dictionary — base tables AND aliases,
         // flattened into one list. Clarion stores aliases under each base
         // table's .Aliases sub-collection (and sometimes also exposes a

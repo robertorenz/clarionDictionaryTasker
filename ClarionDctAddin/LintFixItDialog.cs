@@ -314,7 +314,7 @@ namespace ClarionDctAddin
             var list = new List<Row>();
             IEnumerable<object> tables;
             if (singleTable != null) tables = new[] { singleTable };
-            else tables = DictModel.GetTables(dict);
+            else tables = DictModel.GetTables(dict).Where(t => !Settings.BatchExcludeAliases || !DictModel.IsAlias(t));
 
             foreach (var t in tables)
             {

@@ -14,6 +14,7 @@ namespace ClarionDctAddin
         const string KeyDdlIncludeIndexes  = "ddl_include_indexes";
         const string KeyDdlIncludeComments = "ddl_include_comments";
         const string KeyDdlUseFullPathName = "ddl_use_full_path_name";
+        const string KeyBatchExcludeAliases = "batch_exclude_aliases";
         const string KeyFixKeysStyle     = "fix_keys_style";
         const string KeyFixKeysOwner     = "fix_keys_owner";
         const string KeyFixKeysKey       = "fix_keys_key";
@@ -179,6 +180,11 @@ namespace ClarionDctAddin
         public static bool DdlIncludeIndexes   { get { return GetBool(KeyDdlIncludeIndexes,  true); } set { SetBool(KeyDdlIncludeIndexes,  value); } }
         public static bool DdlIncludeComments  { get { return GetBool(KeyDdlIncludeComments, true); } set { SetBool(KeyDdlIncludeComments, value); } }
         public static bool DdlUseFullPathName  { get { return GetBool(KeyDdlUseFullPathName, true); } set { SetBool(KeyDdlUseFullPathName, value); } }
+
+        // Default ON: write/batch dialogs hide aliases by default because their
+        // Fields/Keys are shared with the base table — touching them in a batch
+        // produces duplicate writes against the same underlying object.
+        public static bool BatchExcludeAliases { get { return GetBool(KeyBatchExcludeAliases, true); } set { SetBool(KeyBatchExcludeAliases, value); } }
 
         public static SqlDdlGenerator.Dialect PreferredDialect
         {
