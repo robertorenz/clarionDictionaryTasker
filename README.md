@@ -49,6 +49,7 @@ A SharpDevelop add-in for **Clarion 10, 11, 11.1, and 12 IDEs** that inspects th
 - **Batch rename (regex)** — regex find/replace across field Label / Description / Heading / Prompt, optionally scoped by table name regex. Preview the plan, then apply with backup.
 - **Batch retype fields** — select every field whose label matches a regex, change type / size / picture in one shot. Any field blank means "preserve". Preview + apply with backup.
 - **Standard audit pack** — pick a TEMPLATE TABLE that already has the audit fields defined (Guid + CreatedOn/By + ModifiedOn/By + DeletedOn). The tool auto-matches those labels against the template and stamps them onto every selected target table via the proven Batch-copy-fields path. `.DCT` backed up first. Optional Markdown recipe export.
+- **Batch clear key external names** — pick one or many tables and wipe the `EXTERNAL NAME` on every key in them. For projects with no SQL backend the per-key external name is noise. Filter the table list, multi-check, preview the list of keys that will be touched, then apply with `.DCT` backup.
 
 ### Enterprise glue
 - **Git commit hook** — detects the repo root, shows `git status` for the `.DCT`, seeds a commit message, commits and optionally pushes. Manual rather than auto-on-save, for reliability across Clarion 12 point releases.

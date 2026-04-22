@@ -167,6 +167,10 @@ namespace ClarionDctAddin
                               Description = "Pick a TEMPLATE TABLE that has the audit fields defined (Guid + CreatedOn/By + ModifiedOn/By + DeletedOn). Stamps them onto every selected target table via the proven Batch-copy-fields path. Backs up the .DCT first. Optional Markdown recipe export.",
                               Implemented = true,
                               OnClick = delegate { OpenStandardAuditPack(); } },
+                new ToolDef { Name = "Clear key external names",
+                              Description = "Pick one or many tables and wipe the EXTERNAL NAME on every key in them. For projects with no SQL backend the per-key external name is noise. Preview lists affected keys; a .DCT backup is written before applying.",
+                              Implemented = true,
+                              OnClick = delegate { OpenClearKeyExternalNames(); } },
             }));
 
             body.Controls.Add(MakeSection("Visualization", new[]
@@ -410,6 +414,13 @@ namespace ClarionDctAddin
         {
             Hide();
             using (var dlg = new GitCommitDialog(dict)) dlg.ShowDialog(this);
+            Show();
+        }
+
+        void OpenClearKeyExternalNames()
+        {
+            Hide();
+            using (var dlg = new BatchClearKeyExternalNamesDialog(dict)) dlg.ShowDialog(this);
             Show();
         }
     }
