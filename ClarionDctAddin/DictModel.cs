@@ -81,12 +81,51 @@ namespace ClarionDctAddin
             return list;
         }
 
+        // Returns every DDFile in the dictionary — base tables AND aliases,
+        // flattened into one list. Clarion stores aliases under each base
+        // table's .Aliases sub-collection (and sometimes also exposes a
+        // top-level dict.Aliases); both paths are merged here, de-duped by
+        // reference so an alias listed in both places doesn't appear twice.
         public static IList<object> GetTables(object dict)
         {
-            var coll = GetProp(dict, "Tables") as IEnumerable;
             var list = new List<object>();
-            if (coll != null) foreach (var o in coll) if (o != null) list.Add(o);
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+            void Add(object t)
+            {
+                if (t == null) return;
+                if (!seen.Add(t)) return;
+                list.Add(t);
+            }
+
+            var coll = GetProp(dict, "Tables") as IEnumerable;
+            if (coll != null)
+            {
+                foreach (var o in coll)
+                {
+                    Add(o);
+                    // Each base table can carry its own .Aliases collection —
+                    // that's where the alias DDFile instances actually live.
+                    var aliases = GetProp(o, "Aliases") as IEnumerable;
+                    if (aliases != null)
+                        foreach (var a in aliases) Add(a);
+                }
+            }
+
+            // Belt-and-braces: some Clarion builds also surface aliases at the
+            // dictionary level. Harmless to merge since the hash-set de-dupes.
+            var topAliases = GetProp(dict, "Aliases") as IEnumerable;
+            if (topAliases != null)
+                foreach (var a in topAliases) Add(a);
+
             return list;
+        }
+
+        sealed class ReferenceEqualityComparer : IEqualityComparer<object>
+        {
+            public static readonly ReferenceEqualityComparer Instance = new ReferenceEqualityComparer();
+            public new bool Equals(object x, object y) { return ReferenceEquals(x, y); }
+            public int GetHashCode(object obj) { return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj); }
         }
 
         public static string GetDictionaryName(object dict)
