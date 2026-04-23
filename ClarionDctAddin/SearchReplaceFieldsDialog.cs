@@ -191,7 +191,7 @@ namespace ClarionDctAddin
             };
             body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-            body.RowStyles.Add(new RowStyle(SizeType.Absolute, 340));
+            body.RowStyles.Add(new RowStyle(SizeType.Absolute, 400));
             body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             body.Controls.Add(BuildMatchPane(),   0, 0);
@@ -321,7 +321,7 @@ namespace ClarionDctAddin
             pnlAttrRules = new FlowLayoutPanel
             {
                 Left = 10, Top = 140,
-                Width = 820, Height = 160,
+                Width = 820, Height = 150,
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 AutoScroll = true,
@@ -331,22 +331,22 @@ namespace ClarionDctAddin
 
             btnAddRule = new Button
             {
-                Text = "+ Add rule", Left = 10, Top = 306, Width = 120, Height = 28,
+                Text = "+ Add rule", Left = 10, Top = 298, Width = 120, Height = 28,
                 FlatStyle = FlatStyle.System, Font = new Font("Segoe UI", 9F)
             };
             btnAddRule.Click += delegate { AddAttrRuleRow(); };
 
-            var lblMerge = new Label { Text = "Merge mode:", Left = 150, Top = 310, AutoSize = true, Font = new Font("Segoe UI Semibold", 9F) };
+            var lblMerge = new Label { Text = "Merge mode:", Left = 10, Top = 340, AutoSize = true, Font = new Font("Segoe UI Semibold", 9F) };
             rbMergeAdditive = new RadioButton
             {
                 Text = "Additive (keep existing attrs, overlay Set/Remove)",
-                Left = 230, Top = 308, AutoSize = true, Checked = true,
+                Left = 90, Top = 338, AutoSize = true, Checked = true,
                 Font = new Font("Segoe UI", 9F)
             };
             rbMergeRewrite  = new RadioButton
             {
                 Text = "Rewrite (drop everything not in Set)",
-                Left = 540, Top = 308, AutoSize = true,
+                Left = 420, Top = 338, AutoSize = true,
                 Font = new Font("Segoe UI", 9F)
             };
 
@@ -622,17 +622,15 @@ namespace ClarionDctAddin
             return s.Substring(0, cut);
         }
 
+        // Join with " | ", skipping empty segments — so a blank base name
+        // with attributes emits "UUID8 | BINARY", not "| UUID8 | BINARY".
         static string JoinTokens(string baseName, List<string> attrs)
         {
-            var sb = new StringBuilder();
-            sb.Append(baseName ?? "");
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(baseName)) parts.Add(baseName);
             foreach (var t in attrs)
-            {
-                if (string.IsNullOrEmpty(t)) continue;
-                sb.Append(" | ");
-                sb.Append(t);
-            }
-            return sb.ToString();
+                if (!string.IsNullOrEmpty(t)) parts.Add(t);
+            return string.Join(" | ", parts.ToArray());
         }
 
         string ApplyRules(
