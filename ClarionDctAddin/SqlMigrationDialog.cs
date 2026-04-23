@@ -710,12 +710,26 @@ namespace ClarionDctAddin
         {
             if (currentPlan.Count == 0) return;
 
-            var confirm = MessageBox.Show(this,
-                currentPlan.Count + " table(s) will be modified.\r\n"
-                + "Any open table editor tabs for these tables will be closed first\r\n"
-                + "so the editor's UI state doesn't overwrite the change on save.\r\n"
-                + "A .tasker-bak-<timestamp> backup of the .DCT is written before any edit.\r\n\r\nProceed?",
-                "SQL Migration", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+            bool currentSelectionIsTarget = IsAnyTargetCurrentlySelected();
+            var warning = new StringBuilder();
+            warning.AppendLine(currentPlan.Count + " table(s) will be modified.");
+            warning.AppendLine("A .tasker-bak-<timestamp> backup of the .DCT is written first.");
+            warning.AppendLine();
+            if (currentSelectionIsTarget)
+            {
+                warning.AppendLine("IMPORTANT: the table you currently have selected in the DCT tree");
+                warning.AppendLine("is in this migration. Clarion caches the selected table's values in");
+                warning.AppendLine("a hidden buffer that overwrites the mutation on save. The tool will");
+                warning.AppendLine("try to deselect+reselect automatically to work around this, but if");
+                warning.AppendLine("the selected table still reverts, click 'Globals' or another non-");
+                warning.AppendLine("target item in the tree BEFORE pressing Ctrl+S.");
+                warning.AppendLine();
+            }
+            warning.AppendLine("Proceed?");
+
+            var confirm = MessageBox.Show(this, warning.ToString(), "SQL Migration",
+                MessageBoxButtons.OKCancel,
+                currentSelectionIsTarget ? MessageBoxIcon.Warning : MessageBoxIcon.Question);
             if (confirm != DialogResult.OK) return;
 
             var r = new FieldMutator.Result();
@@ -733,6 +747,14 @@ namespace ClarionDctAddin
             // values — at save time EntityEditor.AcceptChanges flushes them
             // back over our DDFile changes and the table reverts.
             CloseOpenTableEditors(r);
+
+            // If any target is the currently-selected tree item, deselect it —
+            // the selection-change handler is what commits Clarion's hidden
+            // "last selected" buffer to the model (this is the transition the
+            // user discovered by clicking another table before saving).
+            object capturedSelection = null;
+            object capturedDCTContent = null;
+            DeselectCurrentSelectionIfTarget(r, out capturedSelection, out capturedDCTContent);
 
             // Belt-and-braces: flush any pending UI state back to the model
             // BEFORE we mutate, so user-typed but uncommitted widget values
@@ -763,6 +785,12 @@ namespace ClarionDctAddin
             // stale pre-mutation snapshot the editor loaded when the user
             // first clicked the table.
             RebindLiveEditorsToModel(r);
+
+            // Restore the selection (if we cleared it) — this re-fires the
+            // "entering the table" path which loads the UI from the now-
+            // mutated model. Result: when the user hits Ctrl+S, save writes
+            // the NEW driver instead of the stale buffer.
+            RestoreSelection(r, capturedSelection, capturedDCTContent);
 
             FieldMutator.ForceMarkDirty(dict, DictModel.GetActiveDictionaryView(), r);
 
@@ -1102,6 +1130,118 @@ namespace ClarionDctAddin
             {
                 var hit = FindEmbeddedByTypeName(c, typeNameSuffix);
                 if (hit != null) return hit;
+            }
+            return null;
+        }
+
+        // Check at preview/confirm time whether the user has a target table
+        // currently selected in the DCT tree. Used to decide whether to show
+        // the "selected item will revert" warning in the confirmation dialog.
+        bool IsAnyTargetCurrentlySelected()
+        {
+            var view = DictModel.GetActiveDictionaryView();
+            if (view == null) return false;
+            var control = DictModel.GetProp(view, "Control");
+            if (control == null) return false;
+            var sel = DictModel.GetProp(control, "SelectedItem");
+            if (sel == null) return false;
+            var file = ResolveDDFileFromDataDictionaryItem(sel);
+            if (file == null) return false;
+            return currentPlan.Any(p => ReferenceEquals(p.Table, file));
+        }
+
+        // Clarion's DCTContent.SelectedItem (writable on the control, read-only
+        // on the view wrapper) drives a hidden "last selected item" buffer.
+        // When the user clicks a different tree node, the "leaving" handler
+        // commits that buffer back to the model. If we want our mutation to
+        // stick for the currently-selected table, we need to fire the same
+        // transition: clear the selection now, mutate, then restore it.
+        void DeselectCurrentSelectionIfTarget(FieldMutator.Result r,
+            out object capturedSelection, out object capturedDCTContent)
+        {
+            capturedSelection = null;
+            capturedDCTContent = null;
+
+            var view = DictModel.GetActiveDictionaryView();
+            if (view == null) { r.Messages.Add("selection toggle: no active view"); return; }
+            var control = DictModel.GetProp(view, "Control");
+            if (control == null) { r.Messages.Add("selection toggle: no Control on view"); return; }
+
+            var selProp = control.GetType().GetProperty("SelectedItem",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (selProp == null)
+            {
+                r.Messages.Add("selection toggle: SelectedItem property not found on " + control.GetType().FullName);
+                return;
+            }
+            if (!selProp.CanWrite)
+            {
+                r.Messages.Add("selection toggle: SelectedItem is read-only on " + control.GetType().FullName);
+                return;
+            }
+
+            object sel;
+            try { sel = selProp.GetValue(control, null); }
+            catch (Exception ex) { r.Messages.Add("selection toggle: read SelectedItem threw " + ex.GetType().Name); return; }
+            if (sel == null) { r.Messages.Add("selection toggle: nothing currently selected"); return; }
+
+            var selFile = ResolveDDFileFromDataDictionaryItem(sel);
+            bool isTarget = selFile != null && currentPlan.Any(p => ReferenceEquals(p.Table, selFile));
+            r.Messages.Add("selection toggle: current=" + sel.GetType().Name
+                          + " file=" + (selFile == null ? "null" : selFile.GetType().Name)
+                          + " isTarget=" + isTarget);
+            if (!isTarget) return;
+
+            capturedSelection = sel;
+            capturedDCTContent = control;
+            try
+            {
+                selProp.SetValue(control, null, null);
+                r.Messages.Add("selection toggle: cleared (null).");
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                r.Messages.Add("selection toggle: set null threw " + inner.GetType().Name + " " + inner.Message);
+                capturedSelection = null;
+                capturedDCTContent = null;
+            }
+        }
+
+        void RestoreSelection(FieldMutator.Result r, object capturedSelection, object capturedDCTContent)
+        {
+            if (capturedSelection == null || capturedDCTContent == null) return;
+            var selProp = capturedDCTContent.GetType().GetProperty("SelectedItem",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (selProp == null || !selProp.CanWrite) return;
+            try
+            {
+                selProp.SetValue(capturedDCTContent, capturedSelection, null);
+                r.Messages.Add("selection toggle: restored to " + capturedSelection.GetType().Name + ".");
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                r.Messages.Add("selection toggle: restore threw " + inner.GetType().Name + " " + inner.Message);
+            }
+        }
+
+        // A DataDictionaryItem is a tree-display wrapper. For a table node it
+        // holds a reference to the DDFile on some property whose name varies
+        // by Clarion build — probe the usual candidates.
+        static object ResolveDDFileFromDataDictionaryItem(object ddItem)
+        {
+            if (ddItem == null) return null;
+            // If the item IS a DDFile already (some builds use the DDFile
+            // directly as the selected item), pass it through.
+            var typeName = ddItem.GetType().FullName ?? "";
+            if (typeName.EndsWith(".DDFile") || typeName.EndsWith(".DDBaseFile")) return ddItem;
+            foreach (var propName in new[] { "File", "DDFile", "BaseFile", "Item", "Entity", "Table", "WrappedItem", "Value" })
+            {
+                var v = DictModel.GetProp(ddItem, propName);
+                if (v == null) continue;
+                var tn = v.GetType().FullName ?? "";
+                if (tn.EndsWith(".DDFile") || tn.EndsWith(".DDBaseFile") || tn.Contains("DDFile")) return v;
             }
             return null;
         }
