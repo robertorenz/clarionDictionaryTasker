@@ -1,6 +1,8 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace ClarionDctAddin
@@ -70,6 +72,15 @@ namespace ClarionDctAddin
             btnClose.Click += delegate { Close(); };
             var btnHelp = new Button { Text = "Help", Width = 120, Height = 32, Dock = DockStyle.Left, FlatStyle = FlatStyle.System };
             btnHelp.Click += delegate { OpenHelp(); };
+            var lblVersion = new Label
+            {
+                Text = BuildVersionString(),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 9F),
+                ForeColor = Color.FromArgb(100, 115, 135)
+            };
+            bottom.Controls.Add(lblVersion);   // add Fill first so it sits behind the docked buttons
             bottom.Controls.Add(btnClose);
             bottom.Controls.Add(btnHelp);
 
@@ -155,6 +166,25 @@ namespace ClarionDctAddin
             };
             tile.TileClicked += delegate { onClick(); };
             return tile;
+        }
+
+        // Builds "v0.1.0  ·  built 2026-04-23" from the running assembly so a
+        // user can eyeball whether their last redeploy actually landed.
+        static string BuildVersionString()
+        {
+            string version = "?";
+            string built   = "?";
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var v   = asm.GetName().Version;
+                if (v != null) version = v.Major + "." + v.Minor + "." + v.Build;
+                var loc = asm.Location;
+                if (!string.IsNullOrEmpty(loc) && File.Exists(loc))
+                    built = File.GetLastWriteTime(loc).ToString("yyyy-MM-dd HH:mm");
+            }
+            catch { /* best-effort — never fail the launcher over version display */ }
+            return "Dictionary Tasker  v" + version + "   ·   built " + built;
         }
 
         void OpenBrowse()       { Hide(); using (var d = new TableListDialog(dict))     d.ShowDialog(this); Show(); }
