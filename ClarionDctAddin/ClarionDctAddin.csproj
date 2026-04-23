@@ -17,11 +17,11 @@
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Data" />
     <Reference Include="ICSharpCode.Core">
-      <HintPath>C:\clarion12\bin\ICSharpCode.Core.dll</HintPath>
+      <HintPath>$(ClarionBin)\ICSharpCode.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="ICSharpCode.SharpDevelop">
-      <HintPath>C:\clarion12\bin\ICSharpCode.SharpDevelop.dll</HintPath>
+      <HintPath>$(ClarionBin)\ICSharpCode.SharpDevelop.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

@@ -143,13 +143,13 @@ namespace ClarionDctAddin
                     {
                         // Clarion commonly stores dates / times as LONG with @d* or @t* pictures.
                         if (!string.IsNullOrEmpty(pic)
-                            && !picL.StartsWith("@n") && !picL.StartsWith("@d") && !picL.StartsWith("@t"))
+                            && !picL.StartsWith("@n") && !picL.StartsWith("@d") && !picL.StartsWith("@t") && !picL.StartsWith("@p"))
                             findings.Add(N(Sev.Warning, tName, label, dt, pic,
                                 "LONG picture should be @n*, @d*, or @t*."));
                     }
                     else if (dt == "BYTE" || dt == "SHORT" || dt == "USHORT")
                     {
-                        if (!string.IsNullOrEmpty(pic) && !picL.StartsWith("@n"))
+                        if (!string.IsNullOrEmpty(pic) && !picL.StartsWith("@n") && !picL.StartsWith("@p"))
                             findings.Add(N(Sev.Warning, tName, label, dt, pic, "Integer picture should start with @n."));
                     }
                     else if (dt == "STRING" || dt == "CSTRING" || dt == "PSTRING")
