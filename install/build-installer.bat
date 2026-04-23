@@ -20,8 +20,27 @@ rem Previous versions of this script only CHECKED for a DLL sitting in
 rem bin\Release; if the dev cycle had last compiled Debug (or the Release
 rem output was stale) the installer shipped outdated bits. Compile explicitly
 rem so the installer always bundles what HEAD produces.
+rem
+rem We also wipe bin\ and obj\ first and pass --no-incremental. Reason: the
+rem csproj auto-computes <Version> from DateTime.Now in the
+rem SetVersionFromBuildTime MSBuild target. MSBuild's incremental logic can
+rem still reuse an existing DLL/AssemblyInfo.cs combo if it believes the
+rem inputs haven't changed, which left the installer packaging a DLL with
+rem last-minute's version. A clean + non-incremental build guarantees the
+rem DLL baked into the installer carries the NOW time in its AssemblyVersion.
+set BINDIR=%ROOT%\ClarionDctAddin\bin
+set OBJDIR=%ROOT%\ClarionDctAddin\obj
+if exist "%BINDIR%" (
+  echo Cleaning %BINDIR%
+  rmdir /s /q "%BINDIR%"
+)
+if exist "%OBJDIR%" (
+  echo Cleaning %OBJDIR%
+  rmdir /s /q "%OBJDIR%"
+)
+
 echo Building Release DLL...
-dotnet build -c Release "%CSPROJ%"
+dotnet build -c Release --no-incremental "%CSPROJ%"
 if errorlevel 1 (
   echo.
   echo dotnet build failed -- aborting installer build.
@@ -33,6 +52,17 @@ if not exist "%DLL%" (
   echo Check the build log above for errors.
   exit /b 1
 )
+
+rem Surface the freshly-built DLL's AssemblyVersion so it's obvious in the
+rem install log WHICH version of the add-in ended up in the installer. If
+rem this number doesn't move between consecutive installer builds, something
+rem short-circuited the rebuild and the installer is shipping stale bits.
+for /f "usebackq delims=" %%d in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$v = [System.Reflection.AssemblyName]::GetAssemblyName('%DLL%').Version;" ^
+    "Write-Output ('{0}.{1}.{2}.{3}' -f $v.Major,$v.Minor,$v.Build,$v.Revision)"`) do (
+  set ASM_VERSION=%%d
+)
+echo Built DLL assembly version: %ASM_VERSION%
 
 rem --- 2. bump the patch in VERSION.txt (creating it if missing) -------------
 if not exist "%VERFILE%" (
