@@ -178,7 +178,7 @@ namespace ClarionDctAddin
             {
                 var asm = Assembly.GetExecutingAssembly();
                 var v   = asm.GetName().Version;
-                if (v != null) version = v.Major + "." + v.Minor + "." + v.Build;
+                if (v != null) version = v.Major + "." + v.Minor + "." + v.Build + "." + v.Revision;
                 var loc = asm.Location;
                 if (!string.IsNullOrEmpty(loc) && File.Exists(loc))
                     built = File.GetLastWriteTime(loc).ToString("yyyy-MM-dd HH:mm");

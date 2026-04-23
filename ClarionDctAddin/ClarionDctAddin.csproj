@@ -9,9 +9,27 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Company>Reddin Assessments</Company>
     <Product>Clarion DCT Addin</Product>
-    <Version>0.1.0</Version>
+    <VersionPrefix>0.1</VersionPrefix>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!--
+    Auto-bump Version on every build so the launcher's "v.." label reflects
+    the actual build without anyone having to edit csproj. Scheme:
+      Major.Minor.<days-since-2026-01-01>.<minutes-since-midnight>
+    Both last two fields stay under UInt16.MaxValue for decades, so the
+    AssemblyVersion format stays legal.
+  -->
+  <Target Name="SetVersionFromBuildTime" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo;BeforeCompile">
+    <PropertyGroup>
+      <_BuildDays>$([System.DateTime]::Now.Subtract($([System.DateTime]::Parse('2026-01-01'))).Days)</_BuildDays>
+      <_BuildMins>$([System.Convert]::ToInt32($([System.DateTime]::Now.TimeOfDay.TotalMinutes)))</_BuildMins>
+      <Version>$(VersionPrefix).$(_BuildDays).$(_BuildMins)</Version>
+      <AssemblyVersion>$(Version)</AssemblyVersion>
+      <FileVersion>$(Version)</FileVersion>
+      <InformationalVersion>$(Version)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
