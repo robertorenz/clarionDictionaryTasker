@@ -392,6 +392,15 @@
     <strong>Help</strong> button in the bottom-left to open this manual in your browser, and
     <strong>Close</strong> in the bottom-right to dismiss the launcher.
   </p>
+  <p>
+    The bottom bar also carries a centred, muted line reading
+    <code>Dictionary Tasker  vX.Y.Z.W   ·   built YYYY-MM-DD HH:mm</code>. That's
+    the add-in's <code>AssemblyVersion</code> (computed on every build from
+    <em>days-since-2026-01-01</em> plus <em>minutes-since-midnight</em>) and the mtime
+    of the loaded DLL. After a redeploy, eyeball that line to confirm Clarion actually
+    picked up your new build — if the number didn't move, you're still running a cached
+    copy (close the IDE and rerun <code>deploy.bat</code> or the installer).
+  </p>
   <table>
     <thead><tr><th>Tile</th><th>What it opens</th></tr></thead>
     <tbody>
@@ -855,7 +864,7 @@
       <tr><td><a href="#tools-search">Search &amp; navigation</a></td><td>Global search, Where used, Path finder</td></tr>
       <tr><td><a href="#tools-compare">Compare &amp; diff</a></td><td>Compare tables, Compare dictionaries, Change-log generator</td></tr>
       <tr><td><a href="#tools-export">Generation &amp; export</a></td><td>SQL DDL, Model classes (C# / TS), Markdown documentation</td></tr>
-      <tr><td><a href="#tools-refactor">Refactoring (mutation)</a></td><td>Safe rename field, Batch rename (regex), Batch retype fields, Standard audit pack</td></tr>
+      <tr><td><a href="#tools-refactor">Refactoring (mutation)</a></td><td>Safe rename field, Batch rename (regex), Batch retype fields, Standard audit pack, Batch clear key external names, <strong>Search and replace fields (Bruce's new drivers)</strong></td></tr>
       <tr><td><a href="#tools-visualize">Visualization</a></td><td>Export relations map (SVG)</td></tr>
       <tr><td><a href="#tools-enterprise">Enterprise glue</a></td><td>Git commit hook</td></tr>
     </tbody>
@@ -1295,6 +1304,71 @@
         lights up. The <code>.DCT</code> is backed up first.</li>
   </ul>
 
+  <h3>Search and replace fields (Bruce's new drivers)</h3>
+  <p>
+    Dictionary-wide match-and-replace on the pipe-separated <code>External Name</code>
+    (Label + Extended Attributes) of fields. Motivated by Bruce's new object-based
+    drivers: stamp <code>NOTNULL</code> + <code>DEFAULT=0</code> onto every
+    <code>DATE</code> field in one pass, add <code>UUID7</code> + <code>NOTNULL</code>
+    to every <code>guid</code>-labelled column across a selected set of tables, or rewrite
+    the base name of every field to a <code>PREFIX:Label</code> form.
+  </p>
+  <p>The dialog is four panes stacked vertically:</p>
+  <ul>
+    <li><strong>Tables to scan</strong> (top). Table list with a checkbox column
+        (<em>Name · Prefix · Driver · Fields</em>), a Driver dropdown populated from
+        drivers actually in use in this dictionary, text filter, and
+        <em>Select all / Clear all / Check filtered</em> buttons. Exclude aliases is
+        honoured. Check state is kept in a session-scoped
+        <code>HashSet&lt;string&gt;</code> so refiltering the list (changing the text
+        filter or driver) doesn't lose tables that scrolled out of view.</li>
+    <li><strong>Match fields</strong> (left). Narrow the set of fields the tool will
+        touch: multi-select data types (DATE, STRING, LONG, ...), field-label regex,
+        current-ExternalName regex, case-insensitive toggle.</li>
+    <li><strong>Replacement rules</strong> (right). Two controls:
+      <ul>
+        <li><em>Base name</em> (the first pipe segment) — radio group:
+            <em>Leave current</em>, <em>Use Label</em>, <em>PREFIX:Label</em>,
+            <em>prefix_label</em> (lowercase), <em>Clear</em>, or a custom template with
+            <code>{label}</code> / <code>{prefix}</code> / <code>{type}</code> tokens.</li>
+        <li><em>Attribute rules</em> — add any number of
+            <em>Attribute · Action · Value</em> rows. The Attribute dropdown is preloaded
+            with the full object-based + traditional catalogue (<code>BINARY</code>,
+            <code>BOOLEAN</code>, <code>CASE</code>, <code>CHECK</code>,
+            <code>CHECKFORNULL</code>, <code>COLLATE=</code>, <code>DEFAULT=</code>,
+            <code>ISIDENTITY</code>, <code>NOCASE</code>, <code>NOTNULL</code>,
+            <code>NOWHERE</code>, <code>READONLY</code>, <code>REQ</code>,
+            <code>SELECTNAME=</code>, <code>UPDATENAME=</code>, <code>INSERTNAME=</code>,
+            <code>SQLTYPE=</code>, <code>UUID4</code>, <code>UUID7</code>,
+            <code>UUID8</code>, <code>VALIDATE(...)</code>, <code>WATCH</code>,
+            range-comparators <code>&gt; n</code> / <code>&gt;= n</code> / <code>&lt; n</code> /
+            <code>&lt;= n</code> / <code>&lt;&gt; n</code>, and a <em>Custom</em> slot for
+            anything else) with a tooltip summarising what each one does. Action is
+            <em>Set</em> or <em>Remove</em>; the textbox carries the literal token
+            written between <code>|</code> separators.</li>
+      </ul>
+      <em>Merge mode</em> is a separate radio:
+      <strong>Additive</strong> (keep every existing token, overlay Set/Remove) or
+      <strong>Rewrite</strong> (drop everything the user didn't explicitly Set).
+      Additive is the default — it's the safer choice when a dictionary mixes tables
+      that already have carefully-tuned External Names with tables that don't.</li>
+    <li><strong>Preview</strong> (bottom, full width). Per-field
+        <em>Table · Field · Type · Current ExternalName · New ExternalName</em>, populated
+        only when the base/attribute plan actually changes something. Apply writes
+        through <code>FieldMutator.SetStringProp(field, "ExternalName", ...)</code>
+        with a timestamped <code>.DCT</code> backup first; Ctrl+S in Clarion then saves.</li>
+  </ul>
+  <p>
+    <strong>Persistence.</strong> Every tunable on the dialog is saved to
+    <code>%LOCALAPPDATA%\ClarionDctAddin\settings.txt</code> on FormClosing and restored
+    on the next open — driver filter, checked table names, data types, regexes,
+    case-insensitive, base-name kind, custom template, merge mode, and the full
+    attribute rule list (serialized with Unicode <code>RS</code> / <code>US</code>
+    separators that can't collide with any legal Clarion attribute token). Apply never
+    touches the input controls, so you can hit Apply repeatedly on the same session
+    without losing state.
+  </p>
+
   <h3>Aliases in write tools</h3>
   <p>
     Clarion aliases <em>share</em> their <code>Fields</code> and <code>Keys</code>
@@ -1305,7 +1379,7 @@
   </p>
   <p>
     Every write dialog (Batch copy fields, Batch copy keys, Batch clear key external names,
-    Batch rename, Batch retype fields, Standard audit pack) therefore carries an
+    Batch rename, Batch retype fields, Standard audit pack, Search and replace fields) therefore carries an
     <strong>Exclude aliases</strong> checkbox, defaulting on. Fix fields and Fix keys honour
     the same global preference silently. Rows kept visible when the box is unchecked are
     tagged <code>(alias)</code> after the table name so the user can tell at a glance.
