@@ -81,11 +81,15 @@ namespace ClarionDctAddin
                                     Message = "Table has zero fields." });
 
             if (keyCount == 0)
-                f.Add(new Finding { Severity = Severity.Warning, Target = tName, Rule = "no-keys",
-                                    Message = "Table has no keys — no index, no uniqueness constraint." });
+            {
+                // DOS, BASIC and ASCII are flat-file drivers that don't support keys.
+                if (!IsKeylessDriver(driver))
+                    f.Add(new Finding { Severity = Severity.Warning, Target = tName, Rule = "no-keys",
+                                        Message = "Table has no keys — no index, no uniqueness constraint." });
+            }
 
             var hasPrimary = DictModel.AsString(DictModel.GetProp(table, "HasPrimaryKey"));
-            if (string.Equals(hasPrimary, "False", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(hasPrimary, "False", StringComparison.OrdinalIgnoreCase) && !IsKeylessDriver(driver))
                 f.Add(new Finding { Severity = Severity.Warning, Target = tName, Rule = "no-primary-key",
                                     Message = "Table has no primary key." });
 
@@ -202,6 +206,11 @@ namespace ClarionDctAddin
 
             if (string.IsNullOrWhiteSpace(ext)) return;
 
+            // A table ExternalName starting with '!' is a Clarion global variable
+            // reference for the full path (e.g. !GVF:SomeVariable) — entirely valid,
+            // no further checks apply.
+            if (kind == "table" && ext.StartsWith("!")) return;
+
             // Clarion field-prefix leak — colons have no legal unquoted place in
             // any of the SQL dialects we generate for. MSSQL in particular refuses
             // to parse them even inside brackets.
@@ -244,6 +253,13 @@ namespace ClarionDctAddin
                     Severity = Severity.Warning, Target = target, Rule = "long-external-name",
                     Message = kind + " ExternalName is " + ext.Length + " chars, exceeds " + driver + "'s identifier length limit of " + limit + "."
                 });
+        }
+
+        // Flat-file drivers that have no concept of keys or primary keys.
+        static bool IsKeylessDriver(string driver)
+        {
+            var d = (driver ?? "").ToUpperInvariant().Trim();
+            return d == "DOS" || d == "BASIC" || d == "ASCII";
         }
 
         static bool LooksLikeSafeSqlIdentifier(string s)
@@ -308,14 +324,14 @@ namespace ClarionDctAddin
                 // epoch) and TIME (centiseconds since midnight), so @d* and @t* are
                 // perfectly legitimate pictures on a LONG/ULONG. Only flag when the
                 // picture isn't numeric, date, or time.
-                if (!p.StartsWith("@n") && !p.StartsWith("@d") && !p.StartsWith("@t"))
+                if (!p.StartsWith("@n") && !p.StartsWith("@d") && !p.StartsWith("@t") && !p.StartsWith("@p"))
                     f.Add(new Finding { Severity = Severity.Warning, Target = target, Rule = "picture-int-shape",
                                         Message = "Integer field has picture '" + picture + "'; expected @n*, @d*, or @t*." });
                 return;
             }
             if (dt == "BYTE" || dt == "SHORT" || dt == "USHORT")
             {
-                if (!p.StartsWith("@n"))
+                if (!p.StartsWith("@n") && !p.StartsWith("@p"))
                     f.Add(new Finding { Severity = Severity.Warning, Target = target, Rule = "picture-int-shape",
                                         Message = "Integer field has picture '" + picture + "'; expected @n*." });
                 return;
