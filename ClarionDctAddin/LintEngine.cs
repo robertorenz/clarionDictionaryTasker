@@ -194,6 +194,14 @@ namespace ClarionDctAddin
         {
             if (string.IsNullOrWhiteSpace(ext)) return;
 
+            // ExternalName can carry pipe-separated entries (e.g. "MYNAME|alias2").
+            // Only the first entry is the actual external name; strip the rest.
+            int pipeIdx = ext.IndexOf('|');
+            if (pipeIdx >= 0)
+                ext = ext.Substring(0, pipeIdx).TrimEnd();
+
+            if (string.IsNullOrWhiteSpace(ext)) return;
+
             // Clarion field-prefix leak — colons have no legal unquoted place in
             // any of the SQL dialects we generate for. MSSQL in particular refuses
             // to parse them even inside brackets.
