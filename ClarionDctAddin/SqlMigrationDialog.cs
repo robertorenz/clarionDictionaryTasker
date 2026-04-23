@@ -962,53 +962,136 @@ namespace ClarionDctAddin
             FieldMutator.SetStringProp(table, "OwnerName", owner, r, tableTag + ".driver.kick");
         }
 
-        // Close open TableEditor tabs before we mutate — otherwise the editor
-        // widget state (driver combobox, FullPathName textbox etc., loaded at
-        // open time) flushes back over our changes when the user saves.
+        // Close every UI surface that holds stale buffered values for our target
+        // tables, BEFORE we mutate the DDFile. Without this, the editor's UI
+        // widgets (driver combobox, FullPathName textbox, etc.) loaded at open
+        // time flush back over our changes when the user saves.
         //
-        // DCTContent exposes CloseAllTables() (private) and CloseTable(DDBaseFile,
-        // bool) (internal). Prefer per-table close so we only touch tables we're
-        // actually changing; fall back to CloseAllTables if the per-table entry
-        // isn't available.
+        // Three surfaces to handle:
+        //   1. DCTContent.CloseTable / CloseAllTables — table tab panes
+        //   2. Application.OpenForms containing a TableEditor / TableForm for a
+        //      target table — these are the MODAL windows the user gets when
+        //      they click a table in the tree. CloseTable doesn't touch these.
+        //   3. DCTExplorer.RefreshIfSelected — hints the tree to refresh the
+        //      node if the user has it selected.
         void CloseOpenTableEditors(FieldMutator.Result r)
         {
             var view = DictModel.GetActiveDictionaryView();
-            if (view == null) { r.Messages.Add("editor close: no active view"); return; }
-            var control = DictModel.GetProp(view, "Control");
-            if (control == null) { r.Messages.Add("editor close: no Control on view"); return; }
+            var control = view == null ? null : DictModel.GetProp(view, "Control");
+            if (control == null) { r.Messages.Add("editor close: no Control on view"); }
 
             var flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var tableSet = new HashSet<object>(currentPlan.Select(p => p.Table).Where(x => x != null));
 
-            var mCloseOne = control.GetType().GetMethod("CloseTable", flags);
-            if (mCloseOne != null)
+            // 1. CloseTable per target, or CloseAllTables as a fallback.
+            if (control != null)
             {
-                int closed = 0, failed = 0;
-                foreach (var p in currentPlan)
+                var mCloseOne = control.GetType().GetMethod("CloseTable", flags);
+                if (mCloseOne != null)
                 {
-                    try
+                    int closed = 0, failed = 0;
+                    // Try both bool values — we don't know whether the second arg
+                    // is "save first" (want false) or "force close" (want true).
+                    // Running true-then-false is defensive and cheap.
+                    foreach (var p in currentPlan)
                     {
-                        // second arg is usually "prompt user" / "save first"; pass false to force-close silently.
-                        mCloseOne.Invoke(control, new object[] { p.Table, false });
-                        closed++;
+                        bool ok = false;
+                        foreach (var flag in new[] { true, false })
+                        {
+                            try { mCloseOne.Invoke(control, new object[] { p.Table, flag }); ok = true; break; }
+                            catch { /* try next flag */ }
+                        }
+                        if (ok) closed++; else failed++;
                     }
-                    catch { failed++; }
+                    r.Messages.Add("DCTContent.CloseTable() called for " + closed + " table(s) (" + failed + " failed).");
                 }
-                r.Messages.Add("CloseTable() invoked for " + closed + " table(s), " + failed + " failed.");
-                return;
+                else
+                {
+                    var mCloseAll = control.GetType().GetMethod("CloseAllTables", flags, null, Type.EmptyTypes, null);
+                    if (mCloseAll != null)
+                    {
+                        try { mCloseAll.Invoke(control, null); r.Messages.Add("DCTContent.CloseAllTables() invoked."); }
+                        catch (Exception ex)
+                        {
+                            var inner = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
+                            r.Messages.Add("CloseAllTables threw " + inner.GetType().Name + " " + inner.Message);
+                        }
+                    }
+                }
             }
 
-            var mCloseAll = control.GetType().GetMethod("CloseAllTables", flags, null, Type.EmptyTypes, null);
-            if (mCloseAll != null)
+            // 2. Walk Application.OpenForms — snapshot first since closing mutates it.
+            var snapshot = new List<Form>();
+            foreach (Form f in Application.OpenForms) snapshot.Add(f);
+
+            int formsClosed = 0;
+            foreach (var f in snapshot)
             {
-                try { mCloseAll.Invoke(control, null); r.Messages.Add("CloseAllTables() invoked."); return; }
+                if (f == null || f.IsDisposed || f == this) continue;
+                var tfn = f.GetType().FullName ?? "";
+                // Match TableForm (modal), EntityForm, or anything with TableEditor embedded.
+                bool candidate = tfn.Contains("TableForm") || tfn.EndsWith("EntityForm")
+                                 || FindEmbeddedByTypeName(f, "TableEditor") != null
+                                 || FindEmbeddedByTypeName(f, "TableForm") != null;
+                if (!candidate) continue;
+
+                // Read .File directly or from an embedded TableEditor.
+                var file = DictModel.GetProp(f, "File");
+                if (file == null)
+                {
+                    var embedded = FindEmbeddedByTypeName(f, "TableEditor");
+                    if (embedded != null) file = DictModel.GetProp(embedded, "File");
+                }
+                if (file == null) continue;
+                if (!tableSet.Contains(file)) continue;
+
+                try
+                {
+                    // DialogResult.Cancel = abandon; this avoids the "save changes?" prompt.
+                    f.DialogResult = DialogResult.Cancel;
+                    f.Close();
+                    formsClosed++;
+                }
                 catch (Exception ex)
                 {
-                    var inner = ex is TargetInvocationException && ex.InnerException != null ? ex.InnerException : ex;
-                    r.Messages.Add("CloseAllTables threw " + inner.GetType().Name + " " + inner.Message);
+                    r.Messages.Add("close form " + tfn + " threw " + ex.GetType().Name + " " + ex.Message);
                 }
             }
+            if (formsClosed > 0) r.Messages.Add("Closed " + formsClosed + " open TableForm/TableEditor window(s).");
 
-            r.Messages.Add("editor close: no CloseTable / CloseAllTables method found on " + control.GetType().FullName);
+            // 3. DCTExplorer.RefreshIfSelected — nudge the tree to re-read each
+            // target's display if the user has it selected in the sidebar.
+            if (control != null)
+            {
+                var explorer = DictModel.GetProp(control, "DictionaryExplorer");
+                if (explorer != null)
+                {
+                    var mRefresh = explorer.GetType().GetMethod("RefreshIfSelected", flags);
+                    if (mRefresh != null)
+                    {
+                        int refreshed = 0;
+                        foreach (var p in currentPlan)
+                        {
+                            try { mRefresh.Invoke(explorer, new object[] { p.Table }); refreshed++; }
+                            catch { /* non-fatal */ }
+                        }
+                        if (refreshed > 0) r.Messages.Add("DCTExplorer.RefreshIfSelected called for " + refreshed + " table(s).");
+                    }
+                }
+            }
+        }
+
+        static Control FindEmbeddedByTypeName(Control root, string typeNameSuffix)
+        {
+            if (root == null) return null;
+            var t = root.GetType().FullName ?? "";
+            if (t.EndsWith(typeNameSuffix)) return root;
+            foreach (Control c in root.Controls)
+            {
+                var hit = FindEmbeddedByTypeName(c, typeNameSuffix);
+                if (hit != null) return hit;
+            }
+            return null;
         }
 
         void DumpDriverPropertyShape(object table, FieldMutator.Result r, string tag)
