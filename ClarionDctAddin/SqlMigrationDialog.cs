@@ -247,20 +247,22 @@ namespace ClarionDctAddin
             var grp = new GroupBox
             {
                 Dock = DockStyle.Top,
-                Height = 260,
+                Height = 290,
                 Text = "Migration settings",
                 Font = new Font("Segoe UI Semibold", 9F),
-                BackColor = BgColor,
-                Padding = new Padding(12, 18, 12, 12)
+                BackColor = BgColor
             };
 
+            // Row layout starts well below the GroupBox title strip (~16px)
+            // so the "Migration settings" header isn't hidden under the first control.
             int row = 0;
             int gap = 28;
+            int topBase = 22;
 
-            var lblDrv = new Label { Text = "New driver:", Left = 10, Top = 4 + row * gap, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
+            var lblDrv = new Label { Text = "New driver:", Left = 10, Top = topBase + row * gap + 2, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
             cboNewDriver = new ComboBox
             {
-                Left = 124, Top = 2 + row * gap, Width = 200,
+                Left = 124, Top = topBase + row * gap, Width = 200,
                 DropDownStyle = ComboBoxStyle.DropDown,
                 Font = new Font("Segoe UI", 9.5F)
             };
@@ -273,31 +275,31 @@ namespace ClarionDctAddin
             grp.Controls.Add(cboNewDriver);
             row++;
 
-            var lblOpts = new Label { Text = "Driver options:", Left = 10, Top = 4 + row * gap, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
-            txtDriverOptions = new TextBox { Left = 124, Top = 2 + row * gap, Width = 420, Font = new Font("Consolas", 9.5F) };
+            var lblOpts = new Label { Text = "Driver options:", Left = 10, Top = topBase + row * gap + 2, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
+            txtDriverOptions = new TextBox { Left = 124, Top = topBase + row * gap, Width = 420, Font = new Font("Consolas", 9.5F) };
             txtDriverOptions.Text = "!glo:driveroptions";
             grp.Controls.Add(lblOpts);
             grp.Controls.Add(txtDriverOptions);
             row++;
 
-            var lblOwn = new Label { Text = "Owner name:", Left = 10, Top = 4 + row * gap, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
-            txtOwner = new TextBox { Left = 124, Top = 2 + row * gap, Width = 420, Font = new Font("Consolas", 9.5F) };
+            var lblOwn = new Label { Text = "Owner name:", Left = 10, Top = topBase + row * gap + 2, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
+            txtOwner = new TextBox { Left = 124, Top = topBase + row * gap, Width = 420, Font = new Font("Consolas", 9.5F) };
             txtOwner.Text = "!glo:owner";
             grp.Controls.Add(lblOwn);
             grp.Controls.Add(txtOwner);
             row++;
 
-            var lblFn = new Label { Text = "Full name:", Left = 10, Top = 4 + row * gap, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
+            var lblFn = new Label { Text = "Full name:", Left = 10, Top = topBase + row * gap + 2, Width = 110, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Segoe UI", 9F) };
             chkCopyLabelToFullName = new CheckBox
             {
                 Text = "Copy table Label with schema prefix:",
-                Left = 124, Top = 4 + row * gap,
+                Left = 124, Top = topBase + row * gap + 2,
                 AutoSize = true, Checked = true,
                 Font = new Font("Segoe UI", 9F)
             };
             txtSchemaPrefix = new TextBox
             {
-                Left = 390, Top = 2 + row * gap,
+                Left = 390, Top = topBase + row * gap,
                 Width = 80,
                 Text = "dbo.",
                 Font = new Font("Consolas", 9.5F)
@@ -310,7 +312,7 @@ namespace ClarionDctAddin
             var note = new Label
             {
                 Text = "Leave Driver Options / Owner Name blank to keep the current value on each table.",
-                Left = 10, Top = 4 + row * gap,
+                Left = 10, Top = topBase + row * gap + 2,
                 Width = 540, AutoSize = false, Height = 18,
                 ForeColor = MutedColor,
                 Font = new Font("Segoe UI", 8.5F)
@@ -322,7 +324,7 @@ namespace ClarionDctAddin
             var attrHeader = new Label
             {
                 Text = "Attributes (each is three-state)",
-                Left = 10, Top = 8 + row * gap,
+                Left = 10, Top = topBase + row * gap + 6,
                 Width = 400, Height = 20, AutoSize = false,
                 Font = new Font("Segoe UI Semibold", 9F)
             };
@@ -330,7 +332,7 @@ namespace ClarionDctAddin
 
             int attrRow = 0;
             int attrGap = 30;
-            int attrTop = 30 + row * gap;
+            int attrTop = topBase + row * gap + 28;
 
             cboCreate   = BuildTri("Create:",   10,  attrTop + attrRow * attrGap);  grp.Controls.Add(cboCreate.Parent);  attrRow++;
             cboThreaded = BuildTri("Threaded:", 10,  attrTop + attrRow * attrGap);  grp.Controls.Add(cboThreaded.Parent); attrRow++;
